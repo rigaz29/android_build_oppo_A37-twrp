@@ -1,0 +1,4 @@
+# Artefak build dan biner besar tidak masuk repo ini.
+out/
+*.img
+*.zip
