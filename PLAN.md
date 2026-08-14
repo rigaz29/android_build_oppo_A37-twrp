@@ -145,35 +145,51 @@ misalnya mengecilkan kernel (§1.1 mitigasi 2).
 ## 3. Fase
 
 ### Fase 0 — Ruang dan sumber
-- [ ] Salin keluar dari `/root/los21/out`: `lineage-*.zip`, `boot.img`, `recovery.img`,
+- [x] Salin keluar dari `/root/los21/out`: `lineage-*.zip`, `boot.img`, `recovery.img`,
       `obj/KERNEL_OBJ/arch/arm64/boot/Image`, `installed-files.txt`
-- [ ] Hapus `/root/los21/out` (77 GB) — **jangan** hapus `/root/los21`
-- [ ] `repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b twrp-9.0 --depth=1`
-- [ ] Local manifest: `TeamWin/android_device_oppo_A37f` @ `android-9.0` ke
+      → `/root/a37-twrp/out/los21-artifacts/` (plus `dt.img`, `459a2a6d…`)
+- [x] Hapus `/root/los21/out` (77 GB) — **jangan** hapus `/root/los21`
+- [x] `repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b twrp-9.0 --depth=1`
+      → `/root/twrp`
+- [x] Local manifest: `TeamWin/android_device_oppo_A37f` @ `android-9.0` ke
       `device/oppo/A37f`
 
 **Kriteria selesai:** sync bersih, `device/oppo/A37f` ada, disk sisa ≥ 10 GB.
 
 ### Fase 1 — Tukar kernel dan cmdline
-- [ ] `prebuilt/Image` ← `Image` dari build LOS 21 (18.327.160 B)
-- [ ] `prebuilt/dt.img` ← `dt.img` dari build LOS 21 (`459a2a6d…`). Sudah
-      dibandingkan: **berbeda** dari milik TWRP (`57c924d8…`) meski ukurannya sama.
-      Dipakai milik kita, karena device tree harus sepadan dengan kernel yang
-      memakainya — dan `459a2a6d…` inilah yang byte-identik dengan dt.img ROM LOS 20
-      yang terbukti boot di perangkat ini.
-- [ ] `BOARD_RAMDISK_OFFSET := 0x02000000` (§1.1)
-- [ ] cmdline: tambah enam parameter `ramoops.*` (§1.2), buang `msm_rtb.filter`,
+- [x] `prebuilt/Image` ← `Image` dari build LOS 21 (18.327.160 B, `be170546…`)
+- [x] `prebuilt/dt.img` ← `dt.img` dari build LOS 21 (`459a2a6d…`)
+- [x] `BOARD_RAMDISK_OFFSET := 0x02000000` (§1.1)
+- [x] cmdline: tambah enam parameter `ramoops.*` (§1.2), buang `msm_rtb.filter`,
       pertahankan `console=ttyHSL0`
+- [x] Catatan host: `python` = py3.12 di Ubuntu 24.04, tapi tree twrp-9.0 (2019)
+      butuh py2 → python2.7.18 dikompilasi dari sumber ke `/opt/python2`, build
+      dijalankan dengan `PATH=/opt/python2/bin:$PATH`. Script py2 yang dibetulkan
+      juga sudah dipatch biar jalan di kedua interpreter. Setelah pakai py2,
+      build pertama sempat menghasilkan `java-source-list` kosong untuk modul
+      `dumpkey` (sisa artefak rusak dari run py3) → bersihkan
+      `out/host/common/obj/JAVA_LIBRARIES/dumpkey_intermediates` lalu build ulang.
 
 **Kriteria selesai:** `lunch omni_A37f-eng` lalu `mka recoveryimage` rc=0.
+Diverifikasi langsung di image: kernel `be170546…`, cmdline (header qcom,
+offset 256) memuat keenam `ramoops.*`, `ramdisk_addr 0x82000000` (offset
+0x02000000), `recovery.img` = 27.320.320 B ≤ 32 MB.
 
 ### Fase 2 — Verifikasi artefak sebelum menyentuh perangkat
-- [ ] `recovery.img` ≤ 33.554.432 B (partisi 32 MB)
-- [ ] cmdline di image memuat keenam parameter `ramoops.*`
-- [ ] sha256 kernel di dalam `recovery.img` **identik** dengan kernel `boot.img`
-      LOS 21 — ini yang membuktikan Jalur A benar-benar terjadi
-- [ ] ramdisk memuat `/sbin/recovery` dan `system/etc/init/hw/init.rc` yang
-      me-mount pstore
+- [x] `recovery.img` = 27.320.320 B ≤ 33.554.432 B (partisi 32 MB)
+- [x] cmdline di image (field @64..576) memuat keenam `ramoops.*`,
+      `console=ttyHSL0,115200,n8`, tanpa `msm_rtb.filter`
+- [x] sha256 kernel di dalam `recovery.img` **identik** dengan kernel `boot.img`
+      LOS 21: `be170546a28a1c…` == `be170546a28a1c…` — Jalur A terbukti terjadi
+- [x] ramdisk memuat `/sbin/recovery` (614.236 B, diservice oleh
+      `init.recovery.service.rc`) dan `mount pstore pstore /sys/fs/pstore`
+      di `init.rc:52` (trigger `on fs`). Catatan: `system/etc/init/hw/init.rc`
+      tidak ada di ramdisk TWRP ini — di twrp-9.0 mount pstore hidup di
+      `/init.rc` akar ramdisk, fungsinya sama.
+
+Header image terverifikasi memakai layout qcom yang sama persis dengan
+`boot.img` LOS (cmdline @64, `dt_size` @40 = 210.944 = ukuran dt.img), jadi
+bootloader mem-parse keduanya dengan aturan yang identik.
 
 ### Fase 3 — Uji di perangkat, tanpa mengorbankan TWRP lama
 - [ ] `fastboot boot recovery.img` — jalan dari RAM, partisi tidak tersentuh
