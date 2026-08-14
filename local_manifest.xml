@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Local manifest TWRP untuk OPPO A37f.
+
+  Device tree menunjuk FORK kita, bukan TeamWin langsung. Isinya TeamWin
+  android-9.0 @ 98a46b3 plus satu commit (670d7c0) yang menukar kernel prebuilt
+  dengan kernel ber-patch pstore/ram, menaikkan BOARD_RAMDISK_OFFSET, menambah
+  parameter ramoops ke cmdline, dan memblacklist lis3dh-accel.
+
+  Hulu tetap terlacak: `git remote add twrp https://github.com/TeamWin/...`
+  lalu merge biasa untuk menarik perbaikan mereka. Selisih kita hanya 4 berkas.
+
+  SENGAJA TIDAK digabung ke device tree LineageOS (rb_device_oppo_A37):
+    - path berbeda        device/oppo/A37f  vs  device/oppo/A37
+    - PRODUCT_DEVICE      A37f              vs  A37
+    - basis build         twrp-9.0 (A9)     vs  lineage-21 (A14)
+    - dan yang menentukan: BOARD_RAMDISK_OFFSET bernilai WAJIB berbeda,
+      0x02000000 di sini vs 0x01000000 di LOS. Variabel sama, nilai bentrok.
+-->
+<manifest>
+  <remote name="gh" fetch="https://github.com/rigaz29/" />
+  <project path="device/oppo/A37f" name="android_device_oppo_A37f" remote="gh" revision="android-9.0" />
+</manifest>
