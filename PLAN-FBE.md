@@ -243,7 +243,7 @@ kernel yang sama dengan boot (`BoardConfig.mk:50`) — bukan karena kita lebih t
 - **fstab belum disentuh**, sesuai rencana: kernel yang mampu enkripsi tapi tidak
   dipakai adalah no-op yang aman.
 
-### Fase 1 — TWRP dengan FBE  ⏳ perubahan selesai (`android_device_oppo_A37f@3e0b507`), build berjalan
+### Fase 1 — TWRP dengan FBE  ✅ SELESAI (`android_device_oppo_A37f@3e0b507`)
 - [x] `prebuilt/Image` ← kernel Fase 0, sha256 `a0f0a318bb21…`
 - [x] `TARGET_USERIMAGES_USE_F2FS := true` — **tidak redundan**, tanpanya
       `mkfs.f2fs`/`fsck.f2fs` tidak ikut dibangun (`Android.mk:581-585`) dan TWRP
@@ -259,16 +259,53 @@ kernel yang sama dengan boot (`BoardConfig.mk:50`) — bukan karena kita lebih t
         jadi `:v1` akan mengotori nilai filenames. Sufiks itu hanya untuk fstab LOS.
       - `aes-256-cts` **wajib eksplisit** — default TWRP `aes-256-heh`
         (`Ext4CryptPie.cpp:301`), bukan yang dipakai Android
-- [ ] Bangun `recovery.img`, verifikasi < 32 MB
-      (`BOARD_RECOVERYIMAGE_PARTITION_SIZE`)
+- [x] `recovery.img` terbangun: **27.740.160 B**, margin 5.814.272 B di bawah
+      `BOARD_RECOVERYIMAGE_PARTITION_SIZE` (33.554.432)
+      sha256 `7f67083a1e0a4149…`
 
-**Penghalang yang ditemukan:** pohon sumber `/root/twrp` sudah dihapus setelah
-build Agustus lalu, dan `recovery.img` hasilnya ikut hilang —
-`out/share/recovery-twrp-ramoops.img` kini symlink putus. Yang tersisa 30 MB di
-`los21-artifacts` adalah recovery LineageOS, bukan TWRP. Tidak ada ruang mudah
-untuk dibebaskan: ke-39 ZIP ROM di `los23/out` semuanya hardlink ke **satu**
-inode (844 MB total), ccache hanya 282 MB. Sync ulang `twrp-9.0` dijalankan
-dengan 34 GB bebas.
+**Verifikasi isi image** (bukan sekadar "terbentuk"):
+
+| Yang diperiksa | Hasil |
+|---|---|
+| Kernel di dalam | sha256 `a0f0a318bb21…` — **identik** dengan `prebuilt/Image` dan keluaran build LOS |
+| `etc/twrp.fstab:24` | `/data f2fs defaults fileencryption=aes-256-xts:aes-256-cts` |
+| `sbin/libe4crypt.so` | ada, 148.048 B |
+| Titik masuk FBE | `e4crypt_initialize_global_de()`, `e4crypt_unlock_user_key(...)`, `Decrypt_User` |
+| Awalan keyring di biner | `fscrypt`, `f2fs`, `ext4`, `logon`, `e4crypt` — kelimanya ada |
+| Keymaster | `android.hardware.keymaster@3.0` **dan** `@4.0` dirujuk; perangkat punya 3.0 |
+| Perkakas f2fs | `mkfs.f2fs`, `fsck.f2fs`, `sload.f2fs` — bukti `TARGET_USERIMAGES_USE_F2FS` memang perlu |
+
+Artefak disimpan sebagai **berkas nyata** (bukan symlink) di
+`/root/a37-twrp/out/fbe-artifacts/` dengan `SHA256SUMS` — pelajaran dari build
+Agustus lalu, yang hilang begitu pohon sumbernya dihapus.
+
+### Penghalang yang ditemukan saat Fase 1
+
+**Pohon sumber sudah tidak ada.** `/root/twrp` dihapus setelah build Agustus dan
+`recovery.img` hasilnya ikut hilang (`out/share/recovery-twrp-ramoops.img`
+menjadi symlink putus; yang tersisa 30 MB di `los21-artifacts` adalah recovery
+LineageOS). Tidak ada ruang mudah dibebaskan: ke-39 ZIP ROM di `los23/out`
+semuanya hardlink ke **satu** inode (844 MB total), ccache hanya 282 MB. Sync
+ulang `twrp-9.0` dijalankan dengan 34 GB bebas → pohon 22 GB, sisa 12 GB.
+
+**Dua jebakan lingkungan build — keduanya BUKAN soal kode:**
+
+1. `PATH=/opt/python2/bin:$PATH` **wajib** diekspor sebelum build. Tanpanya
+   `build/make/tools/check_radio_versions.py` gagal parse
+   (`SyntaxError: Missing parentheses in call to 'print'`) karena
+   `/usr/bin/python` di host ini Python 3.12. Interpreter 2.7.18 sudah terpasang
+   di `/opt/python2` sejak 12 Agustus. **Jangan tambal skripnya** — itu repo
+   hulu yang di-sync, tambalannya hilang pada sync berikutnya, dan masalahnya
+   memang di lingkungan.
+
+2. Build yang gagal di tengah meninggalkan `java-source-list` **0 byte** di
+   `out/host/common/obj/JAVA_LIBRARIES/dumpkey_intermediates/`. Build berikutnya
+   menganggapnya mutakhir, memberi javac daftar kosong, dan menghasilkan
+   `dumpkey.jar` berisi 1088 kelas bouncycastle tapi **nol** `com/android/` —
+   **tanpa pesan error**. Log bahkan mencetak "Host Java: dumpkey" seolah
+   sukses; kegagalannya baru muncul jauh kemudian sebagai
+   `ClassNotFoundException: com.android.dumpkey.DumpPublicKey`. Obatnya: hapus
+   direktori intermediate modul itu saja, jangan seluruh `out/`.
 
 ### Fase 2 — Pasang TWRP, uji SEBELUM enkripsi
 - Flash recovery, boot ke TWRP
