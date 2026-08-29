@@ -223,20 +223,52 @@ kernel yang sama dengan boot (`BoardConfig.mk:50`) — bukan karena kita lebih t
 
 ## 5. Fase
 
-### Fase 0 — Kernel ber-FBE
-- Tambah `CONFIG_FS_ENCRYPTION=y` dan `CONFIG_F2FS_FS_ENCRYPTION=y` ke
-  `lineageos_a37f_defconfig`
-- Bangun; verifikasi `xts(aes)` dan `cts(cbc(aes))` muncul di `/proc/crypto`
-  setelah boot
-- **Belum menyentuh fstab** — kernel yang mampu enkripsi tapi tidak dipakai adalah
-  no-op yang aman
+### Fase 0 — Kernel ber-FBE  ✅ SELESAI (`kernel_oppo_msm8939@a5e7652c8c5`)
+- [x] `CONFIG_FS_ENCRYPTION=y` + `CONFIG_F2FS_FS_ENCRYPTION=y` di
+      `lineageos_a37f_defconfig`
+- [x] **Penghalang tak terduga:** build pertama gagal dengan
+      `fs/crypto/keyinfo.c:218: implicit declaration of function
+      'SHASH_DESC_ON_STACK'`. Backport `fs/crypto/` di pohon ini disalin dari
+      kernel 4.x tapi **tidak pernah sekali pun dikompilasi**, karena
+      `CONFIG_FS_ENCRYPTION` belum pernah dinyalakan — makro pendukungnya tidak
+      ikut terbawa. Diperbaiki dengan menyalin definisi upstream dari kernel
+      a6010 (`include/crypto/hash.h:61-64`), basis sama 3.10.108, berkas identik
+      byte-per-byte sampai baris 60.
+- [x] Build bersih: `fs/crypto/{crypto,fname,policy,keyinfo,bio}.o` →
+      `fscrypto.o`. `.config` memuat `FS_ENCRYPTION`, `F2FS_FS_ENCRYPTION`, dan
+      `CRYPTO_XTS/CTS/ECB` yang diseleksi otomatis.
+- [x] `Image` 18.429.944 B (dari 18.327.160). Jauh di bawah
+      `BOARD_RAMDISK_OFFSET` 0x02000000.
+- [ ] Verifikasi `/proc/crypto` di perangkat — menunggu flash (Fase 2)
+- **fstab belum disentuh**, sesuai rencana: kernel yang mampu enkripsi tapi tidak
+  dipakai adalah no-op yang aman.
 
-### Fase 1 — TWRP dengan FBE
-- `BoardConfig.mk`: tambah `TW_INCLUDE_CRYPTO_FBE := true`
-- `prebuilt/Image`: ganti dengan kernel Fase 0
-- `twrp.fstab:9`: `/data` → f2fs, buang `encryptable=footer` dan `length=-16384`
-- Bangun `recovery.img`, verifikasi ukurannya masih < 32 MB
-  (`BOARD_RECOVERYIMAGE_PARTITION_SIZE`)
+### Fase 1 — TWRP dengan FBE  ⏳ perubahan selesai (`android_device_oppo_A37f@3e0b507`), build berjalan
+- [x] `prebuilt/Image` ← kernel Fase 0, sha256 `a0f0a318bb21…`
+- [x] `TARGET_USERIMAGES_USE_F2FS := true` — **tidak redundan**, tanpanya
+      `mkfs.f2fs`/`fsck.f2fs` tidak ikut dibangun (`Android.mk:581-585`) dan TWRP
+      tidak bisa memformat `/data` jadi f2fs
+- [x] `TW_INCLUDE_CRYPTO_FBE := true` — **ternyata redundan**:
+      `Android.mk:347-358` sudah menyetelnya sendiri saat `TW_INCLUDE_CRYPTO=true`
+      dan SDK ≥ 24, dan BoardConfig sudah punya itu sejak dulu. Artinya build TWRP
+      sebelumnya **kemungkinan sudah memuat kode FBE**. Tetap ditulis eksplisit
+      karena syaratnya bergantung versi SDK lingkungan build.
+- [x] `twrp.fstab:9` → f2fs + `fileencryption=aes-256-xts:aes-256-cts`
+      - **tanpa sufiks `:v1`** — parser TWRP 9.0 memecah pada titik dua PERTAMA
+        (`partition.cpp:904-918`) lalu menyetel `fbe.contents`/`fbe.filenames`,
+        jadi `:v1` akan mengotori nilai filenames. Sufiks itu hanya untuk fstab LOS.
+      - `aes-256-cts` **wajib eksplisit** — default TWRP `aes-256-heh`
+        (`Ext4CryptPie.cpp:301`), bukan yang dipakai Android
+- [ ] Bangun `recovery.img`, verifikasi < 32 MB
+      (`BOARD_RECOVERYIMAGE_PARTITION_SIZE`)
+
+**Penghalang yang ditemukan:** pohon sumber `/root/twrp` sudah dihapus setelah
+build Agustus lalu, dan `recovery.img` hasilnya ikut hilang —
+`out/share/recovery-twrp-ramoops.img` kini symlink putus. Yang tersisa 30 MB di
+`los21-artifacts` adalah recovery LineageOS, bukan TWRP. Tidak ada ruang mudah
+untuk dibebaskan: ke-39 ZIP ROM di `los23/out` semuanya hardlink ke **satu**
+inode (844 MB total), ccache hanya 282 MB. Sync ulang `twrp-9.0` dijalankan
+dengan 34 GB bebas.
 
 ### Fase 2 — Pasang TWRP, uji SEBELUM enkripsi
 - Flash recovery, boot ke TWRP
