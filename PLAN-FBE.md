@@ -307,11 +307,35 @@ ulang `twrp-9.0` dijalankan dengan 34 GB bebas → pohon 22 GB, sisa 12 GB.
    `ClassNotFoundException: com.android.dumpkey.DumpPublicKey`. Obatnya: hapus
    direktori intermediate modul itu saja, jangan seluruh `out/`.
 
-### Fase 2 — Pasang TWRP, uji SEBELUM enkripsi
-- Flash recovery, boot ke TWRP
-- Pastikan `/data` (masih ext4 tanpa enkripsi) tetap ter-mount dan terbaca
-- **Ini gerbangnya.** Kalau TWRP baru tidak bisa membaca `/data` yang belum
-  terenkripsi sekalipun, berhenti di sini — jangan lanjut
+### Fase 2 — Pasang TWRP, uji SEBELUM enkripsi  ✅ LOLOS
+- [x] Flash recovery, boot ke TWRP — `ro.twrp.boot=1`, `ro.build.product=A37f`,
+      TWRP 3.7.0_9-0, build `Sat Aug 29 05:15:58 UTC 2026`
+- [x] Kernel yang berjalan: `3.10.108-lineageos-gbe67c444ba1-dirty`. Sufiks
+      `-dirty` adalah penanda kernel FBE kita (dibangun sebelum perubahan
+      di-commit); sistem lama berjalan tanpa sufiks itu.
+- [x] **Verifikasi Fase 0 yang tertunda:** `/proc/crypto` memuat
+      `xts(aes)` → `xts-aes-neon` prio 200. (`cts(cbc(aes))` belum muncul karena
+      CTS adalah template yang baru di-instantiate saat diminta — bukan tanda
+      hilang.)
+- [x] **GERBANG LOLOS.** `/data` ter-mount dan terbaca:
+      ```
+      /dev/block/mmcblk0p38 on /data type ext4 (rw,seclabel,relatime,data=ordered)
+      /data/         adb anr apex app app-asec app-lib backup ...
+      /data/media/0/ Alarms Android Audiobooks DCIM Documents Download Movies
+      packages.list  com.android.fmradio 1000 0 /data/user/0/... (isi terbaca)
+      ```
+      Nama direktori wajar, bukan sampah terenkripsi. Deteksi blkid bekerja:
+      fstab menyebut f2fs, partisi sebenarnya ext4, TWRP mount sebagai ext4.
+- [x] Properti FBE tersetel **benar** dari fstab:
+      ```
+      I:FBE contents 'aes-256-xts', filenames 'aes-256-cts'
+      Fstab_File_System: f2fs
+      Flags: ... Can_Be_Encrypted Use_Userdata_Encryption ...
+      ```
+      `fbe.filenames` = `aes-256-cts` — bukan `aes-256-heh` (default TWRP) dan
+      bukan `aes-256-cts:v1` (yang akan terjadi kalau sufiks `:v1` dibiarkan).
+      Kedua keputusan di baris fstab terbukti benar di perangkat.
+- [x] `/sbin/mkfs.f2fs`, `fsck.f2fs`, `libe4crypt.so` semuanya ada
 
 ### Fase 3 — Aktifkan FBE di ROM
 - `fstab.qcom:6`: tambah `fileencryption=aes-256-xts:aes-256-cts:v1` ke baris f2fs
