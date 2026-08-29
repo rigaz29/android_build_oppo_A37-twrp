@@ -1,5 +1,9 @@
 # TWRP A37f dengan dukungan FBE — recovery dulu, baru sistem
 
+> **Status akhir:** FBE berjalan di ROM (Fase 3-4 selesai, terukur). Dekripsi
+> dari TWRP **tidak tercapai** — jalur 9.0 buntu di keymaster, jalur 12.1
+> terbangun tapi tidak boot. Dihentikan; rinciannya di Fase 5.
+
 Tujuan tunggal: **recovery yang bisa mendekripsi `/data` ber-FBE.** Ini prasyarat,
 bukan pelengkap. Tanpa ini, mengaktifkan FBE di ROM berarti membuat perangkat yang
 recovery-nya tidak bisa menyentuh datanya sendiri — dan satu-satunya jalan keluar
@@ -430,3 +434,132 @@ Tulis hanya turun 22% karena 34-37 MB/s memang sudah di bawah langit-langit itu.
 - **Backport enkripsi ext4** — 1.747 baris, hanya perlu kalau kita memilih ext4.
 - **Metadata encryption** — mustahil, `dm-default-key` tidak ada.
 - **Menyentuh `PLAN.md` lama** — itu catatan pekerjaan yang sudah selesai.
+
+---
+
+## Fase 5 — TWRP 12.1: dibangun, tidak boot. DIHENTIKAN.
+
+Setelah jalur TWRP 9.0 buntu, rujukan acroreiser twrp-12.1 (`android_device_
+lenovo_a6010`, `android_kernel_lenovo_a6010`) menunjukkan susunan yang berjalan
+di msm8916/kernel 3.10 — perangkat yang praktis sama dengan A37.
+
+**Analisis awalnya benar dan tetap berlaku.** Dua hal diverifikasi dari sumber
+sebelum sebaris kode ditulis:
+
+| | |
+|---|---|
+| vold TeamWin android-12.1 | `KeyStorage.cpp:74` memuat komentar IDENTIK dengan Android 16 ("old key directories may contain a file named 'stretching'"), `:438` memakai `appId = secdiscardable_hash + auth.secret` yang juga identik, set berkas kunci identik, prefix hash identik. Masalah `stretching` yang butuh tambalan di 9.0 **tidak ada** di 12.1. |
+| Kernel twrp-12.1 a6010 | Tidak punya apa pun yang kita butuhkan. ext4+Adiantum, F2FS bahkan tidak dibangun, dan **tidak ada `CONFIG_KEYS_COMPAT`** — kernel mereka arm 32-bit murni. |
+
+Koreksi atas analisis sebelumnya di bagian 0: kesimpulan "12.1 butuh keystore2 +
+authsecret + metadata encryption" **keliru**. Itu hasil memeriksa
+`bootable/recovery` saja; implementasi FBE-nya sebenarnya di fork `system/vold`
+milik TeamWin, yang mendukung `TW_USE_FSCRYPT_POLICY := 1`.
+
+### Yang dibangun
+
+Device tree lengkap di `android_device_oppo_A37f` branch **`twrp-12.1`**
+(`b13d0ce`, lalu `7c36e94`). `recovery.img` 32.055.296 B, margin 1.499.136 B.
+
+Isinya diverifikasi dengan membongkar ramdisk, bukan dari status build:
+
+```
+offset 40 = 210944                      ukuran dt.img — tambalan QCDT bekerja
+kernel sha256 5d4ee856…                 cocok dengan prebuilt/Image
+etc -> /system/etc                      symlink terbentuk
+ramdisk magic 5d0000                    LZMA
+keymaster@4.1-service                   6.068 B
+gatekeeper@1.0-service.software        20.832 B
+libkeymaster4.so / libkeymaster41.so   57.432 / 23.092 B
+vendor/manifest.xml + system/etc/vintf/manifest.xml
+system/etc/recovery.fstab               fileencryption=aes-256-xts:aes-256-cts:v1
+```
+
+### Enam penghalang build
+
+Sepuluh percobaan build. Tidak satu pun menyentuh keputusan desain dari rujukan;
+device tree-nya benar sejak `lunch` pertama.
+
+| # | Penghalang | Sifat |
+|---|---|---|
+| 1 | `\x0a` di `TW_INPUT_BLACKLIST` bukan escape JSON yang sah — soong mati saat menulis `soong.variables`. Diganti `\n`, sah di JSON **dan** string C. | lingkungan |
+| 2 | ccache read-only di dalam sandbox build 12.1 (build LOS memakai bind-mount `-B /root/.ccache`, 12.1 tidak). | lingkungan |
+| 3 | `USE_CCACHE=0` kalah oleh `CCACHE_EXEC` yang diset `/root/.bashrc`. Diselesaikan dengan mengarahkan `CCACHE_DIR` ke dalam pohon `out/`. | lingkungan |
+| 4 | `mkbootimg` AOSP 12 membuang `--dt`; A37 memakai QCDT. Tiga hunk disalin dari mkbootimg LineageOS. | platform |
+| 5 | `/etc` adalah symlink ke `/system/etc` di layout 12.1; direktori `recovery/root/etc/` menghalanginya. | layout |
+| 6 | Sisa `root/etc` di `out/` membuat perbaikan #5 tidak berlaku — errornya menunjuk gejala, bukan sebab. | artefak basi |
+
+### Kegagalan boot pertama: kernel panic — TERDIAGNOSIS
+
+`BOARD_RAMDISK_USE_XZ := true` disalin dari a6010. Kernel mereka punya
+`CONFIG_RD_XZ`; kernel A37 hanya `CONFIG_RD_BZIP2` dan `CONFIG_RD_LZMA`
+(`lineageos_a37f_defconfig:27-28`). Kernel panic saat memuat ramdisk:
+
+```
+Process swapper/4 (Pid: 1)
+Call trace:
+  [<(null)>] (null)
+  initrd_load+0x0/0x2d4
+  prepare_namespace+0xdc
+  kernel_init_freeable
+Code: (bad PC value)
+```
+
+Diperbaiki dengan LZMA. **Ini kelas kesalahan yang sama dengan `KEYS_COMPAT`,
+hanya arah sebaliknya**: menyalin dari rujukan pada hal yang justru bergantung
+pada perbedaan antara kedua kernel. Rujukan mengajari struktur, bukan apa yang
+kernel kita dukung.
+
+### Kegagalan boot kedua: "offline" — BELUM TERDIAGNOSIS
+
+Setelah perbaikan LZMA, kernel memuat ramdisk dan **USB ter-enumerasi dengan
+serial yang benar** (`23bb7d0`) — kemajuan nyata dari panic yang mati sebelum
+userspace. Tapi `adb devices` berhenti di `offline`, `adb reconnect` tidak
+menolong, dan TWRP tidak pernah menampilkan UI.
+
+Yang sudah disingkirkan sebagai penyebab, dengan membandingkan ramdisk 12.1
+terhadap ramdisk 9.0 yang adb-nya bekerja:
+
+```
+sys.usb.ffs.aio_compat=1   ADA di keduanya (prop.default:65)
+ro.debuggable=1            sama
+ro.secure=0                sama
+persist.sys.usb.config=adb sama
+ro.build.type=eng          sama
+```
+
+**Penyebabnya belum diketahui.**
+
+### Kenapa berhenti: bukti hilang tiga kali
+
+Ramoops akan memuat log kegagalan, tapi **hilang tiga kali** karena pemulihan
+lewat EDL memutus daya dan mengosongkan RAM.
+
+Prosedur yang BENAR, untuk siapa pun yang melanjutkan:
+
+1. Flash `recovery.img` **dari sistem yang berjalan**, bukan EDL:
+   `dd if=<img> of=/dev/block/mmcblk0p23 bs=1048576` — aman, recovery tidak
+   sedang dipakai. Verifikasi dengan membaca balik jumlah byte yang PERSIS sama.
+2. `adb reboot recovery`
+3. Kalau gagal: **tahan Power sampai mati, lalu nyalakan biasa**. JANGAN EDL,
+   JANGAN kombinasi recovery. BCB di `misc` terbukti kosong, jadi dijamin masuk
+   sistem.
+4. Sistem boot normal dan `/sys/fs/pstore/console-ramoops` memuat log recovery
+   yang gagal.
+
+Semua prasyaratnya terverifikasi: root di sistem (`u:r:su:s0`), partisi recovery
+bisa ditulis dari sistem, sistem boot normal, pstore terbaca, BCB kosong.
+
+### Keadaan akhir
+
+Perangkat berfungsi penuh. FBE aktif dan terukur. TWRP 9.0 lama terpasang dan
+bisa flash, wipe, sideload, mount.
+
+**Keterbatasan yang diketahui: TWRP tidak bisa mendekripsi `/data` selama FBE
+aktif.** Backup partisi data lewat recovery tidak berguna — isinya blob
+terenkripsi. Yang tetap berfungsi: `adb sideload`, flash ROM, wipe, flash dari
+kartu SD.
+
+Device tree 12.1 lengkap dan siap dipakai kalau ada yang mau melanjutkan; yang
+kurang hanya diagnosis satu kegagalan userspace, dan prosedur untuk
+mendapatkannya sudah tertulis di atas.
