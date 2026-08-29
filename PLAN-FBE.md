@@ -337,17 +337,71 @@ ulang `twrp-9.0` dijalankan dengan 34 GB bebas → pohon 22 GB, sisa 12 GB.
       Kedua keputusan di baris fstab terbukti benar di perangkat.
 - [x] `/sbin/mkfs.f2fs`, `fsck.f2fs`, `libe4crypt.so` semuanya ada
 
-### Fase 3 — Aktifkan FBE di ROM
-- `fstab.qcom:6`: tambah `fileencryption=aes-256-xts:aes-256-cts:v1` ke baris f2fs
-- Bangun ROM, flash, format `/data` (wipe)
-- Verifikasi di `logcat`: vold mencetak "Falling back to session keyring"
-  (`KeyUtil.cpp:93`) — itu tanda jalur v1 aktif
+### Fase 3 — Aktifkan FBE di ROM  ✅ SELESAI (`rb_device_oppo_A37@09e3e2e1`, `kernel@d055d768d26`)
+- [x] `fstab.qcom:25` + `fileencryption=aes-256-xts:aes-256-cts:v1`
+- [x] ROM `lineage-23.2-20260829_085630` dibangun dan diflash
+- [x] **BOOTLOOP** pada percobaan pertama — berhenti di logo OPPO, reboot ke
+      recovery. Didiagnosis dari ramoops:
 
-### Fase 4 — Verifikasi silang
-- Boot ke TWRP, pastikan `/data` bisa didekripsi dengan PIN/sandi
-- Ukur ulang throughput dengan metode yang sama persis seperti baseline
-  (`dd` 1 GB, `conv=fsync` untuk tulis, `drop_caches` untuk baca) supaya angkanya
-  bisa dibandingkan langsung dengan 138/34 MB/s
+      F2FS-fs (mmcblk0p38): Mounted with checkpoint version = 3137a167
+      init: [libfs_mgr] __mount(target=/data,type=f2fs)=0: Success
+      init: [libfs_mgr] /data is file encrypted
+      vold  Kernel doesn't support FS_IOC_ADD_ENCRYPTION_KEY. Falling back to
+            session keyring
+      vold  Unable to find device keyring: Function not implemented   <-- ENOSYS
+
+      Mount, deteksi FBE, dan pemilihan jalur v1 semuanya BENAR. Yang gagal
+      langkah terakhir: `keyctl()` mengembalikan ENOSYS.
+
+      Sebab: di kernel 3.10 `KEYS_COMPAT` hanya didefinisikan per-arsitektur
+      (`arch/x86/Kconfig:2312`, `s390:265`, `powerpc:1014`, `sparc:537`) dan
+      **tidak ada di arm64**. `security/keys/Makefile:18` karena itu tidak pernah
+      membangun `compat.o`, `compat_sys_keyctl` yang dirujuk `unistd32.h:647`
+      tidak ada, dan linker mengisi entri syscall 311 dengan `sys_ni_syscall`.
+
+      Ini khas A37 — kernel arm64 dengan userspace 32-bit. Rujukan a6010 secara
+      struktural tidak bisa mengajari ini: kernel mereka arm 32-bit murni,
+      lapisan compat tidak pernah terlibat.
+
+      Perbaikan: tiga baris di `arch/arm64/Kconfig`, bentuk sama dengan
+      `SYSVIPC_COMPAT` yang sudah ada tepat di atasnya. Terverifikasi:
+      `compat.o` terbangun (3.488 B), `CONFIG_KEYS_COMPAT=y`, dan
+      `ffffffc00024a344 T compat_sys_keyctl` ada di System.map.
+- [x] Flash `boot.img` perbaikan → **boot normal**
+
+### Fase 4 — Verifikasi dan pengukuran  ✅ SELESAI
+
+**FBE aktif, terverifikasi berlapis:**
+
+```
+ro.crypto.state = encrypted        ro.crypto.type = file
+/data           = f2fs (rw,seclabel,...,inline_xattr,inline_data,...)
+kernel          = 3.10.108-lineageos-ga5e7652c8c5-dirty
+/data/unencrypted/mode = aes-256-xts:aes-256-cts:v1     <- persis isi fstab
+/data/unencrypted/ref  = 50 88 32 d3 5b 01 b5 de        <- 8 byte, deskriptor v1
+am_crash 0   am_anr 0   tombstone 0   SIM LTE normal
+```
+
+**Biaya kinerja — diisolasi dengan eksperimen terkontrol.** `/data/unencrypted/`
+ada di f2fs yang sama tapi sengaja tidak dienkripsi, jadi satu-satunya variabel
+yang berbeda adalah enkripsi:
+
+| 256 MB, governor performance @1209,6 MHz | f2fs polos | f2fs + FBE | selisih |
+|---|---|---|---|
+| Tulis (`conv=fsync`) | 37 MB/s | 29 MB/s | −22% |
+| Baca (cache dingin) | **141 MB/s** | **37 MB/s** | **−74%** |
+
+Pembanding baseline lama (ext4 polos): baca 138, tulis 34 MB/s. Jadi **f2fs
+sendiri sedikit lebih cepat** dari ext4 — seluruh penurunan berasal dari
+enkripsi, bukan dari pergantian filesystem.
+
+Angka baca 37 MB/s mendarat nyaris tepat di langit-langit AES-256 bulk yang
+diukur `bssl` sebelumnya (35 MB/s). Pembacaan berurutan sekarang **terikat
+kripto, bukan flash** — persis yang diprediksi dari `/proc/cpuinfo` tanpa
+instruksi AES dan dari `qcom-xts(aes)` yang tidak pernah cocok dengan permintaan
+`xts(aes)` fscrypt.
+
+Tulis hanya turun 22% karena 34-37 MB/s memang sudah di bawah langit-langit itu.
 
 ---
 
