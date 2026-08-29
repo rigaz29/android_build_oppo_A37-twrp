@@ -1,0 +1,40 @@
+diff --git a/minuitwrp/events.cpp b/minuitwrp/events.cpp
+index e497df6..66b1252 100644
+--- a/minuitwrp/events.cpp
++++ b/minuitwrp/events.cpp
+@@ -247,14 +247,33 @@ static int vk_init(struct ev *e)
+     }
+ #else
+     char* bl = strdup(EXPAND(TW_INPUT_BLACKLIST));
+-    char* blacklist = strtok(bl, "\n");
++    /*
++     * Mekanisme asli menganggap TW_INPUT_BLACKLIST datang lewat Android.mk,
++     * di mana shell melucuti tanda kutipnya sehingga STRINGIFY (twcommon.h:37)
++     * menghasilkan string literal C yang rapi dan "\x0a" menjadi newline saat
++     * kompilasi. Pada basis 12.1 nilainya melewati soong.variables sebagai JSON:
++     * "\x0a" ditolak parser JSON, dan "\n" justru diterjemahkan menjadi newline
++     * SUNGGUHAN yang lalu dilipat preprocessor menjadi satu kata. Hasilnya
++     * '"hbtp_vmlis3dh-accelcompass..."' -- tanpa pemisah dan dengan tanda kutip
++     * ikut di dalam string, sehingga strcmp tidak pernah cocok dan seluruh
++     * blacklist diam-diam tidak berfungsi.
++     *
++     * Karena itu: lucuti tanda kutip yang menempel, lalu pisah pada koma
++     * MAUPUN newline supaya kedua gaya penulisan tetap bekerja.
++     */
++    size_t bl_len = strlen(bl);
++    if (bl_len >= 2 && bl[0] == '"' && bl[bl_len - 1] == '"') {
++        bl[bl_len - 1] = '\0';
++        memmove(bl, bl + 1, bl_len - 1);
++    }
++    char* blacklist = strtok(bl, ",\n");
+ 
+     while (blacklist != NULL) {
+         if (strcmp(e->deviceName, blacklist) == 0) {
+             LOGI("Blacklisting input device: %s\n", blacklist);
+             e->ignored = 1;
+         }
+-        blacklist = strtok(NULL, "\n");
++        blacklist = strtok(NULL, ",\n");
+     }
+     free(bl);
+ #endif

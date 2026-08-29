@@ -1,8 +1,8 @@
 # TWRP A37f dengan dukungan FBE — recovery dulu, baru sistem
 
-> **Status akhir:** FBE berjalan di ROM (Fase 3-4 selesai, terukur). Dekripsi
-> dari TWRP **tidak tercapai** — jalur 9.0 buntu di keymaster, jalur 12.1
-> terbangun tapi tidak boot. Dihentikan; rinciannya di Fase 5.
+> **Status akhir: SELESAI.** FBE berjalan di ROM (Fase 3-4, terukur) **dan
+> TWRP 12.1 berhasil mendekripsi `/data`** — `User 0 Decrypted Successfully!`.
+> Tujuan proyek tercapai penuh. Rinciannya di Fase 6.
 
 Tujuan tunggal: **recovery yang bisa mendekripsi `/data` ber-FBE.** Ini prasyarat,
 bukan pelengkap. Tanpa ini, mengaktifkan FBE di ROM berarti membuat perangkat yang
@@ -437,7 +437,7 @@ Tulis hanya turun 22% karena 34-37 MB/s memang sudah di bawah langit-langit itu.
 
 ---
 
-## Fase 5 — TWRP 12.1: dibangun, tidak boot. DIHENTIKAN.
+## Fase 5 — TWRP 12.1: dibangun, tidak boot (terpecahkan di Fase 6)
 
 Setelah jalur TWRP 9.0 buntu, rujukan acroreiser twrp-12.1 (`android_device_
 lenovo_a6010`, `android_kernel_lenovo_a6010`) menunjukkan susunan yang berjalan
@@ -563,3 +563,235 @@ kartu SD.
 Device tree 12.1 lengkap dan siap dipakai kalau ada yang mau melanjutkan; yang
 kurang hanya diagnosis satu kegagalan userspace, dan prosedur untuk
 mendapatkannya sudah tertulis di atas.
+
+---
+
+## Fase 6 — TWRP 12.1 berhasil. Dekripsi FBE tercapai.
+
+> Ditulis 29 Agustus 2026, setelah Fase 5 dihentikan. Yang membuka jalan buntu
+> Fase 5 bukan ide baru, melainkan satu pertanyaan yang belum pernah ditanyakan:
+> **kenapa adb selalu `offline`?** Begitu adb hidup, sisanya terbaca dari log
+> dalam hitungan menit.
+
+### 6.0 Ringkas: apa yang sebenarnya salah
+
+Fase 5 berhenti dengan tiga gejala yang tampak seperti tiga masalah besar:
+recovery tidak menampilkan UI, adb selalu `offline`, dan diagnosis mustahil
+karena ramoops hilang berulang kali. Ternyata ketiganya **satu rantai**, dan
+tidak ada yang mendasar:
+
+| Gejala | Sebab sebenarnya | Ukuran perbaikan |
+|---|---|---|
+| adb `offline` | kernel tanpa AIO di FunctionFS | 4 commit backport |
+| tidak ada UI | satu pustaka hilang dari ramdisk | 1 berkas prebuilt |
+| sentuhan liar | 1 flag salah + blacklist yang tidak pernah bekerja | 1 baris + 1 tambalan |
+| adb mati 5 detik | MTP merobohkan gadget USB | 1 baris |
+
+### 6.1 adb `offline`: kernel, bukan TWRP
+
+Gejalanya menyesatkan: USB ter-enumerasi dengan serial benar, tapi handshake
+CNXN tidak pernah terjadi.
+
+Sebabnya `ffs_epfile_operations` di kernel A37 hanya punya `.read`/`.write`,
+tanpa `.aio_read`/`.aio_write` — nol kemunculan `aio_` dan `kiocb` di
+`drivers/usb/gadget/f_fs.c`. Akibatnya `io_submit()` ke fd endpoint
+mengembalikan `-EINVAL`.
+
+Dan adbd AOSP 12 **tidak punya jalur mundur sama sekali**:
+
+```
+twrp12  packages/modules/adb/daemon/usb.cpp:604
+    if (io_submit(aio_context_.get(), 1, &iocb) != 1) {
+        HandleError(...);   // tidak ada penanganan EINVAL
+        return false;
+    }
+
+usb_init_legacy          : 0 kemunculan
+daemon/usb_legacy.cpp    : TIDAK ADA (dihapus AOSP 12)
+Android.bp:540-541       : hanya usb.cpp + usb_ffs.cpp
+```
+
+**Jebakan yang mahal:** kita SUDAH memperbaiki bug ini untuk ROM — commit
+`1781bd85` memulihkan `usb_init_legacy` dan deteksi `gFfsAioSupported` di
+`packages/modules/adb` **LineageOS**. Tapi TWRP memakai `packages/modules/adb`
+**AOSP**, repo yang sama sekali berbeda. Tambalan itu tidak pernah terbawa.
+
+> **Aturan yang lahir dari sini:** kalau ROM dan recovery sama-sama butuh sebuah
+> perbaikan, kerjakan di KERNEL. Keduanya berbagi kernel
+> (`TARGET_PREBUILT_KERNEL := prebuilt/Image`), tapi tidak berbagi pohon
+> userspace mana pun.
+
+Perbaikannya meniru a6010 yang tidak pernah punya masalah ini karena kernelnya
+sudah membackport AIO. Empat commit, urutan kronologis wajib:
+
+```
+e7252e046c6  add poll for endpoint 0                   (+41)
+f446497f1d0  add aio support                           (+210/-67)
+704a347f6eb  Fix use after free as part of queue failure  (+1)
+0b55453c8df  Fix use-after-free                          (-1)
+```
+
+Dua commit terakhir memperbaiki bug **di dalam kode aio itu sendiri** —
+mengambil aio tanpa keduanya berarti menanam use-after-free. Urutan poll dulu
+wajib: patch aio butuh `#include <linux/poll.h>` sebagai konteks di baris 29.
+
+Keempatnya apply bersih. Dugaan awal bahwa `f_fs.c` kita terlalu menyimpang
+ternyata meleset: acroreiser membackport di atas varian Qualcomm yang sama
+(`MAX_BUF_LEN`, `atomic epfile->error`, `goto first_try`).
+
+Ada di `rigaz29/kernel_oppo_msm8939` branch **`twrp-12.1`**, sengaja dipisah
+dari `lineage-23`.
+
+`.poll` di ep0 masalah kedua yang lebih halus: tanpa `.poll`, `fs/select.c:452`
+memberi `DEFAULT_POLLMASK` yang selalu "siap", sehingga cabang timeout
+`usb.cpp:277` tidak pernah aktif dan adbd langsung memblokir di `adb_read`.
+
+**Yang ternyata BUKAN masalah:** format deskriptor. Kedua kernel hanya V1
+(`FUNCTIONFS_DESCRIPTORS_MAGIC = 1`), dan adbd punya fallback sendiri
+(`usb_ffs.cpp:282` coba V2, gagal, mundur ke V1 di `:285`). Justru inilah yang
+menjelaskan kenapa USB tetap ter-enumerasi dengan serial benar.
+
+### 6.2 Tidak ada UI: satu pustaka
+
+Dengan adb hidup, jawabannya keluar dalam satu perintah:
+
+```
+init.svc.recovery = restarting          ← crash tiap 5 detik
+$ /system/bin/recovery
+CANNOT LINK EXECUTABLE: library "libresetprop.so" not found
+```
+
+Logo OPPO itu framebuffer yang tidak pernah ditimpa karena UI mati sebelum
+menggambar. Dari **51** pustaka yang di-NEEDED biner recovery, **tepat satu**
+tidak ada di ramdisk.
+
+`bootable/recovery/Android.mk:368` menyalakan `TW_INCLUDE_LIBRESETPROP` otomatis
+begitu `TW_INCLUDE_CRYPTO` aktif — jadi kita tidak pernah memintanya secara
+sadar. Modulnya Soong dengan `recovery_available: true`, tapi varian recovery-nya
+**tidak pernah dibangun**: nol direktori `*_recovery` di seluruh `out/soong`.
+Pustakanya hanya mendarat di `out/.../system/lib/`.
+
+Dipasang sebagai prebuilt lewat `TARGET_RECOVERY_DEVICE_DIRS`
+(`build/make/core/Makefile:2073`) — pola yang sudah dipakai keempat prebuilt
+lain di device tree ini, dan sama dengan cara a6010 mengirim service keymaster.
+
+### 6.3 Sentuhan liar: dua sebab
+
+**Pertama, flag yang kita setel sendiri.** `report/input-devices.txt` mencatat
+`synaptics-s3203` dengan `ABS=2658000 0`. Didekode (format `/proc/bus/input/devices`
+menulis word tinggi lebih dulu) menjadi bit 47, 48, 50, 53, 54, 57:
+
+```
+47  ABS_MT_SLOT          53  ABS_MT_POSITION_X
+48  ABS_MT_TOUCH_MAJOR   54  ABS_MT_POSITION_Y
+50  ABS_MT_WIDTH_MAJOR   57  ABS_MT_TRACKING_ID
+```
+
+Multitouch **tipe B**, yang menandai jari diangkat lewat `TRACKING_ID = -1`.
+`TW_IGNORE_ABS_MT_TRACKING_ID := true` membuat `events.cpp:617` melakukan
+`return 1` sebelum mencapai blok yang menyetel `touchReleaseOnNextSynReport`.
+Pelepasan sentuhan tidak pernah terdaftar.
+
+**Kedua — dan ini yang paling mudah terlewat — blacklist masukan tidak pernah
+bekerja.** Pemeriksaan `strings` sempat menyatakan aman; `strings` justru
+menyembunyikan masalahnya karena ia memecah pada newline. Pemeriksaan byte:
+
+```
+b'"hbtp_vmlis3dh-accelcompasslightproximity"'
+```
+
+Pemisah hilang, tanda kutip ikut ke dalam string. Jadi `hbtp_vm` dan
+`lis3dh-accel` yang kita kira sudah diblokir sejak awal **tidak pernah**
+terblokir. Rinciannya di `patches-twrp121/README.md`.
+
+Yang paling merusak adalah `compass`: `ABS=7` yaitu `ABS_X`, `ABS_Y`, `ABS_Z`,
+dan `events.cpp:510` menerjemahkan `ABS_X` langsung menjadi `e->p.x`.
+Magnetometer yang mengalir terus menyuntikkan koordinat palsu.
+`events.cpp:241-259` hanya mencocokkan NAMA — tanpa penyaringan kemampuan —
+sehingga apa pun yang tidak diblokir ikut dibaca.
+
+### 6.4 adb mati 5 detik: MTP
+
+```
+890: I:Starting MTP
+910: E:[MTP] Failed to start usb driver!
+```
+
+`Enable_MTP()` di `partitionmanager.cpp` menyetel `sys.usb.config` ke `"none"`
+lebih dulu — merobohkan **seluruh** gadget USB termasuk adb — lalu gagal
+mengikatnya ulang sebagai `mtp,adb`.
+
+Ironisnya MTP baru dijalankan **karena dekripsi berhasil**: `twrp.cpp:256`
+mensyaratkan `TW_IS_DECRYPTED`. Jadi gejala ini justru bukti bahwa tujuan utama
+sudah tercapai.
+
+### 6.5 Dekripsi: berhasil
+
+```
+recovery.log:107   I:User 0 is not decrypted.
+             110   Attempting to decrypt FBE for user 0...
+             113   fscrypt_unlock_user_key returned fail
+             119   Attempting to decrypt user's synthetic password
+             122   using secdis to decrypt spblob
+             123   spblob v2 / v3
+             128   User 0 Decrypted Successfully!
+             132   Data successfully decrypted
+             135   I:New storage path after decryption: /data/media/0
+```
+
+`fscrypt_unlock_user_key` memang gagal — kernel 3.10 tidak punya keyring fscrypt,
+persis seperti diperkirakan di Fase 1. Tapi TWRP mundur ke **synthetic password**
+lewat `secdiscardable`, dan itu berhasil. Keymaster 4.1 yang dipaksa lewat
+`TW_FORCE_KEYMASTER_VER` terpakai (`Keymaster_Ver::Using keymaster version '4.1'`),
+sehingga error `keymaster@4.0::IKeymasterDevice` yang berulang di dmesg ternyata
+hanya derau.
+
+### 6.6 Keadaan akhir terverifikasi
+
+Diukur langsung lewat adb di dalam recovery:
+
+```
+init.svc.recovery = running          (sebelumnya: restarting)
+uptime adb        = 619 detik+       (sebelumnya: ~5 detik)
+sys.usb.config    = adb              gadget functions = ffs
+/data             = f2fs, termount, isi nyata terlihat
+blacklist         = 5 perangkat, tercatat di log
+dmesg             = 0 segfault / BUG / panic
+error di log      = 0
+```
+
+Perangkat masukan yang tetap dibaca hanya empat yang dibutuhkan:
+`synaptics-s3203`, `synaptics-s3203-kpd`, `qpnp_pon`, `gpio-keys`.
+
+### 6.7 Pelajaran
+
+1. **Diagnosis mengalahkan tebakan.** Fase 5 berhenti karena ramoops hilang
+   tiga kali. Yang mengubah keadaan adalah membuat saluran diagnosis hidup
+   (adb), bukan menebak lebih keras. Setelah itu tiga masalah selesai dalam
+   satu sore.
+
+2. **Perbaikan userspace tidak menyeberang antar-pohon.** ROM dan TWRP tidak
+   berbagi repo adb. Kernel adalah satu-satunya lapisan yang keduanya bagi.
+
+3. **`strings` bukan alat verifikasi untuk string yang mengandung pemisah.**
+   Ia memecah pada newline dan menyembunyikan justru apa yang sedang diperiksa.
+   Pemeriksaan byte yang menemukan bug blacklist.
+
+4. **Rujukan mengajari struktur, bukan kemampuan kernel.** a6010 tidak punya
+   `CONFIG_KEYS_COMPAT` tapi kita butuh; a6010 punya `CONFIG_RD_XZ` tapi kita
+   tidak. Keduanya memakan siklus flash. Sebaliknya, backport AIO mereka apply
+   bersih karena basis `f_fs.c`-nya memang sama.
+
+5. **Ramdisk basi menipu dua kali di proyek ini.** Kalau sebuah perubahan
+   tampak tidak berefek, hapus `out/target/product/A37f/recovery` sebelum
+   mencari sebab lain.
+
+### 6.8 Yang masih terbuka
+
+- `TW_EXTRA_LANGUAGES := false` **tidak berpengaruh** — kesembilan belas berkas
+  bahasa (960 KB) tetap ikut. Tidak mendesak: partisi masih sisa 1,48 MB dari
+  33.554.432 byte. Berarti pemangkasan bahasa yang dilakukan di Fase 5 untuk
+  mengejar ukuran sebenarnya percuma; yang menyelamatkan waktu itu adalah
+  pergantian XZ ke LZMA.
+- Perekaman video, dan uji backup/restore penuh lewat TWRP di atas `/data`
+  yang terdekripsi, belum dicoba.
