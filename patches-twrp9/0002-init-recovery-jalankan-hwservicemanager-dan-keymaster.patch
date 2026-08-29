@@ -1,0 +1,43 @@
+diff --git a/recovery/root/init.recovery.qcom.rc b/recovery/root/init.recovery.qcom.rc
+index d9b4890..ee82ec7 100644
+--- a/recovery/root/init.recovery.qcom.rc
++++ b/recovery/root/init.recovery.qcom.rc
+@@ -43,6 +43,38 @@ service vm_bms /sbin/vm_bms
+ on property:ro.crypto.state=encrypted
+     start sbinqseecomd
+ 
++# FBE: TWRP butuh HAL keymaster untuk membuka /data/unencrypted/key, dan HAL
++# HIDL butuh hwservicemanager lebih dulu. Tanpa keduanya proses recovery
++# menggantung di futex_wait saat retrieveAndInstallKey -- log berhenti tepat
++# setelah "Key exists, using: /data/unencrypted/key" tanpa pesan error.
++#
++# Urutannya SENGAJA lewat hwservicemanager.ready, bukan dua "start" berurutan
++# di satu blok: init tidak menjamin servis pertama selesai mendaftar sebelum
++# yang kedua jalan, dan keymaster harus punya hwservicemanager untuk didaftari.
++# hwservicemanager menyetel properti itu sendiri setelah siap
++# (system/hwservicemanager/service.cpp:68).
++#
++# Keduanya root/seclabel recovery, mengikuti pola sbinqseecomd di atas -- SELinux
++# di recovery ini permissive, dan servis aslinya berjalan sebagai nobody/drmrpc
++# yang tidak ada di ramdisk TWRP.
++service hwservicemanager /sbin/hwservicemanager
++    disabled
++    user root
++    group root
++    seclabel u:r:recovery:s0
++
++service keymaster-3-0 /sbin/hw/android.hardware.keymaster@3.0-service
++    disabled
++    user root
++    group root drmrpc
++    seclabel u:r:recovery:s0
++
++on property:ro.crypto.state=encrypted
++    start hwservicemanager
++
++on property:hwservicemanager.ready=true
++    start keymaster-3-0
++
+ on property:ro.twrp.boot=1
+     write /proc/boot_completed_prop 1
+     setprop persist.sys.usb.config mtp,adb

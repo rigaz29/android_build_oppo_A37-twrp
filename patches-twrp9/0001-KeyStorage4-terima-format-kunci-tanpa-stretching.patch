@@ -1,0 +1,43 @@
+diff --git a/crypto/ext4crypt/KeyStorage4.cpp b/crypto/ext4crypt/KeyStorage4.cpp
+index b086791..c284620 100644
+--- a/crypto/ext4crypt/KeyStorage4.cpp
++++ b/crypto/ext4crypt/KeyStorage4.cpp
+@@ -577,7 +577,37 @@ bool retrieveKey(const std::string& dir, const KeyAuthentication& auth, KeyBuffe
+     std::string secdiscardable_hash;
+     if (!readSecdiscardable(dir + "/" + kFn_secdiscardable, &secdiscardable_hash)) return false;
+     std::string stretching;
+-    if (!readFileToString(dir + "/" + kFn_stretching, &stretching)) return false;
++    auto stretching_file = dir + "/" + kFn_stretching;
++    if (access(stretching_file.c_str(), F_OK) != 0) {
++        // A37: Android 11 ke atas TIDAK LAGI menulis berkas "stretching" maupun
++        // "salt". vold Android 16 menyatakannya eksplisit di
++        // system/vold/KeyStorage.cpp:66 ("old key directories may contain a file
++        // named 'stretching'"). Direktori kunci yang benar-benar ditulis di
++        // perangkat hanya berisi: encrypted_key, keymaster_key_blob,
++        // secdiscardable, version.
++        //
++        // Tanpa ini retrieveKey() gagal di baris pertama:
++        //   Failed to read from /data/unencrypted/key/stretching
++        //   e4crypt_initialize_global_de returned fail
++        // dan TWRP hanya menampilkan nama berkas terenkripsi.
++        //
++        // Dipilih kStretch_none, BUKAN kStretch_nopassword. Keduanya melewati
++        // pembacaan salt (stretchingNeedsSalt() false untuk keduanya), tapi
++        // rumus appId-nya berbeda:
++        //
++        //   nopassword -> stretched kosong -> appId = secdiscardable_hash
++        //   none       -> stretched=secret -> appId = secdiscardable_hash+secret
++        //
++        // vold Android 16 memakai appId = secdiscardable_hash + auth.secret
++        // (KeyStorage.cpp:421). kStretch_none menyamainya PERSIS untuk kedua
++        // keadaan -- tanpa sandi layar (secret kosong) maupun dengan PIN.
++        // Prefix hash sudah dipastikan identik: "Android secdiscardable SHA512".
++        stretching = kStretch_none;
++        LOG(INFO) << "No " << kFn_stretching << " file; assuming modern key format ("
++                  << kStretch_none << ")" << std::endl;
++    } else if (!readFileToString(stretching_file, &stretching)) {
++        return false;
++    }
+     std::string salt;
+     if (stretchingNeedsSalt(stretching)) {
+         if (!readFileToString(dir + "/" + kFn_salt, &salt)) return false;
