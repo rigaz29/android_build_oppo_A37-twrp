@@ -1,8 +1,9 @@
 # TWRP A37f dengan dukungan FBE — recovery dulu, baru sistem
 
-> **Status akhir: SELESAI.** FBE berjalan di ROM (Fase 3-4, terukur) **dan
-> TWRP 12.1 berhasil mendekripsi `/data`** — `User 0 Decrypted Successfully!`.
-> Tujuan proyek tercapai penuh. Rinciannya di Fase 6.
+> **Status: tujuan utama SELESAI.** FBE berjalan di ROM (Fase 3-4, terukur)
+> **dan TWRP 12.1 berhasil mendekripsi `/data`** — `User 0 Decrypted
+> Successfully!`. Rinciannya di Fase 6. Fase 7 mengejar MTP dan adb agar
+> berjalan berdampingan; MTP sudah jalan, adb masih dikerjakan.
 
 Tujuan tunggal: **recovery yang bisa mendekripsi `/data` ber-FBE.** Ini prasyarat,
 bukan pelengkap. Tanpa ini, mengaktifkan FBE di ROM berarti membuat perangkat yang
@@ -795,3 +796,67 @@ Perangkat masukan yang tetap dibaca hanya empat yang dibutuhkan:
   pergantian XZ ke LZMA.
 - Perekaman video, dan uji backup/restore penuh lewat TWRP di atas `/data`
   yang terdekripsi, belum dicoba.
+
+---
+
+## Fase 7 — MTP dan adb berdampingan (sedang berjalan)
+
+> Ditulis 29 Agustus 2026, lanjutan Fase 6. Berisi satu perbaikan yang sudah
+> terbukti dan satu yang belum.
+
+### 7.1 MTP: bug open ganda — SELESAI, terverifikasi
+
+MTP dimatikan di akhir Fase 6 lewat `TW_EXCLUDE_MTP` karena diduga
+merobohkan adb. Dugaan itu **salah**; MTP hanya korban.
+
+`MtpServer::run()` selalu gagal dengan `Failed to start usb driver!` karena
+`/dev/mtp_usb` dibuka dua kali — `mtp_MtpServer.cpp:77` untuk `controlFd`,
+lalu `MtpDevHandle::start()` membukanya lagi. `unique_fd::reset()` menutup fd
+lama, tapi argumennya dievaluasi lebih dulu, jadi open kedua bertabrakan
+dengan kunci eksklusif `mtp_lock(&_mtp_dev->open_excl)` di `f_mtp`.
+
+Terbukti langsung: membuka `/dev/mtp_usb` dua kali di perangkat menghasilkan
+`Device or resource busy` pada yang kedua. Setelah ditambal, MTP berjalan dan
+PC mendeteksi storage. Lihat `patches-twrp121/0003`.
+
+### 7.2 adb setelah komposisi USB berganti — BELUM terverifikasi
+
+Dengan MTP hidup, adb jatuh ke `offline`. Logcat dari perangkat memberi
+mekanismenya tanpa ruang tebakan:
+
+```
+02:09:58  adbd PID 276  opening control endpoint /dev/usb-ffs/adb/ep0
+02:09:58  adbd PID 276  USB event: FUNCTIONFS_BIND / FUNCTIONFS_ENABLE
+02:10:01  adbd PID 308  cannot open control endpoint: Device or resource busy
+```
+
+**PID 276 tidak pernah menerima `FUNCTIONFS_UNBIND`.** `android_disable()`
+tidak memanggil `functionfs_unbind`; ia bergantung pada adbd melepas `ep0`
+(commit CAF `ac76de240429` menyebutnya eksplisit). Jadi adbd tidak bisa tahu
+gadget dirobohkan — ia harus dihentikan dari luar.
+
+Perbaikannya: `Release_ADB_FFS()` menghentikan adbd lewat `ctl.stop` dan
+menunggu `init.svc.adbd` berhenti `running`, dipanggil sebelum
+`sys.usb.config` disentuh di `Enable_MTP()` dan `Disable_MTP()`.
+Lihat `patches-twrp121/0004`.
+
+### 7.3 Tiga percobaan yang gagal, dan kenapa
+
+Dicatat karena masing-masing memakan satu siklus flash dan pelajarannya sama.
+
+| Percobaan | Hasil | Kenapa gagal |
+|---|---|---|
+| `TW_EXCLUDE_MTP := true` | adb jalan, MTP hilang | menyerang gejala; MTP bukan penyebabnya |
+| `TW_MTP_DEFAULT_DISABLED` | tidak berpengaruh | `mPersist.SetValue()` hanya menetapkan DEFAULT; nilai `tw_mtp_enabled=1` sudah tersimpan di `/data` dan menang |
+| komposisi statis `mtp,adb` sejak boot | **keduanya mati** | mengubah jalur boot yang belum pernah terbukti; gadget tidak naik |
+| `restart adbd` di init | adb tetap offline | `restart` = stop+start tanpa menunggu; proses lama masih memegang `ep0` |
+
+**Pelajarannya berulang dan sama seperti Fase 6:** ketiga percobaan itu
+dibangun dari penalaran tanpa data perangkat. Yang akhirnya memberi jawaban
+adalah satu berkas logcat. Ambil data dulu, baru bangun.
+
+Rujukan acroreiser diperiksa untuk masalah ini dan **tidak ada yang bisa
+diambil**: `android.c` mereka beda 4 baris dari kita (satu pragma, satu gaya
+kurung kurawal), `struct functionfs_config` mereka tetap instance tunggal, dan
+commit CAF yang relevan sudah ada di pohon kita. Nilainya justru pada pesan
+commit `ac76de240429` yang menjelaskan ketergantungan unbind pada adbd.

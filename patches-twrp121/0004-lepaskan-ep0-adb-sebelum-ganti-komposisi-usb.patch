@@ -1,0 +1,68 @@
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index 2766b4c..aedcafe 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -2769,6 +2769,45 @@ TWPartition *TWPartitionManager::Get_Default_Storage_Partition()
+ 	return res;
+ }
+ 
++
++#ifdef TW_HAS_MTP
++/*
++ * Lepaskan /dev/usb-ffs/adb/ep0 sebelum komposisi gadget USB diganti.
++ *
++ * android_disable() di drivers/usb/gadget/android.c TIDAK memanggil
++ * functionfs_unbind; ia bergantung pada adbd melepas ep0 sehingga
++ * ffs_ep0_release -> functionfs_closed_callback yang melakukan unbind.
++ * Commit CAF ac76de240429 menyebut ketergantungan ini secara eksplisit.
++ *
++ * Akibatnya adbd tidak pernah menerima FUNCTIONFS_UNBIND dan tidak tahu
++ * gadget dirobohkan -- terbukti di logcat: adbd PID 276 berhenti mencatat
++ * apa pun setelah ENABLE, sementara instance berikutnya gagal terus dengan
++ * "cannot open control endpoint ...: Device or resource busy" karena
++ * ffs_ep0_open() menolak saat atomic_read(&ffs->opened) masih tidak nol.
++ *
++ * "restart adbd" di init TIDAK cukup: stop dan start dijalankan tanpa
++ * menunggu, sehingga proses lama masih memegang ep0 saat yang baru lahir.
++ * Karena itu penghentiannya ditunggu sampai benar-benar selesai di sini.
++ */
++static void Release_ADB_FFS(void) {
++	char state[PROPERTY_VALUE_MAX];
++	property_get("init.svc.adbd", state, "");
++	if (strcmp(state, "running") != 0)
++		return;
++	LOGINFO("Stopping adbd to release FunctionFS ep0\n");
++	property_set("ctl.stop", "adbd");
++	for (int i = 0; i < 50; i++) {
++		usleep(100000);
++		property_get("init.svc.adbd", state, "");
++		if (strcmp(state, "running") != 0) {
++			LOGINFO("adbd stopped after %d ms\n", (i + 1) * 100);
++			return;
++		}
++	}
++	LOGERR("adbd did not stop; USB composition switch may leave adb offline\n");
++}
++#endif
++
+ bool TWPartitionManager::Enable_MTP(void) {
+ #ifdef TW_HAS_MTP
+ 	if (mtppid) {
+@@ -2787,6 +2826,7 @@ bool TWPartitionManager::Enable_MTP(void) {
+ 	property_get("sys.usb.config", old_value, "");
+ 	if (strcmp(old_value, "mtp,adb") != 0) {
+ 		char vendor[PROPERTY_VALUE_MAX];
++		Release_ADB_FFS();
+ 		char product[PROPERTY_VALUE_MAX];
+ 		property_set("sys.usb.config", "none");
+ 		property_get("usb.vendor", vendor, "18D1");
+@@ -2843,6 +2883,9 @@ bool TWPartitionManager::Disable_MTP(void) {
+ 	property_get("sys.usb.config", old_value, "");
+ 	if (strcmp(old_value, "adb") != 0) {
+ 		char vendor[PROPERTY_VALUE_MAX];
++#ifdef TW_HAS_MTP
++		Release_ADB_FFS();
++#endif
+ 		char product[PROPERTY_VALUE_MAX];
+ 		property_set("sys.usb.config", "none");
+ 		property_get("usb.vendor", vendor, "18D1");

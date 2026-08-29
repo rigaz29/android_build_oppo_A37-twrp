@@ -1,0 +1,27 @@
+diff --git a/mtp/ffs/MtpDevHandle.cpp b/mtp/ffs/MtpDevHandle.cpp
+index e22ba55..27b691e 100644
+--- a/mtp/ffs/MtpDevHandle.cpp
++++ b/mtp/ffs/MtpDevHandle.cpp
+@@ -60,6 +60,22 @@ int MtpDevHandle::sendEvent(mtp_event me) {
+ }
+ 
+ int MtpDevHandle::start(bool /* ptp */) {
++	/*
++	 * Konstruktor sudah menyimpan controlFd yang dibuka pemanggil
++	 * (mtp_MtpServer.cpp membukanya dengan O_WRONLY). unique_fd::reset()
++	 * menutup fd lama, TAPI argumennya -- open() di bawah ini -- dievaluasi
++	 * lebih dulu, jadi open kedua terjadi selagi fd pertama masih terbuka.
++	 *
++	 * Driver f_mtp memakai kunci eksklusif: mtp_open() memanggil
++	 * mtp_lock(&_mtp_dev->open_excl) dan mengembalikan -EBUSY kalau perangkat
++	 * sudah terbuka. Akibatnya open kedua selalu gagal dan start() balik -1,
++	 * yang muncul sebagai "Failed to start usb driver!". Terbukti di perangkat:
++	 * membuka /dev/mtp_usb dua kali menghasilkan EBUSY pada yang kedua.
++	 *
++	 * Lepas dulu fd lama, baru buka ulang dengan O_RDWR yang memang dibutuhkan
++	 * MTP untuk membaca maupun menulis.
++	 */
++	mFd.reset();
+ 	mFd.reset(TEMP_FAILURE_RETRY(open(mtp_dev_path, O_RDWR)));
+ 	if (mFd == -1) return -1;
+ 	return 0;
