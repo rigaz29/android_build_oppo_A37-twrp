@@ -1,0 +1,42 @@
+diff --git a/mkbootimg.py b/mkbootimg.py
+index e0b0839..07639c3 100755
+--- a/mkbootimg.py
++++ b/mkbootimg.py
+@@ -211,8 +211,12 @@ def write_header(args):
+     args.output.write(pack('I', args.base + args.tags_offset))
+     # flash page size
+     args.output.write(pack('I', args.pagesize))
+-    # version of boot image header
+-    args.output.write(pack('I', args.header_version))
++    # version of boot image header, or -- pada image Qualcomm lama -- ukuran
++    # tabel device tree yang ditempel. Keduanya menempati offset 40 yang sama.
++    if args.dt:
++        args.output.write(pack('I', filesize(args.dt)))
++    else:
++        args.output.write(pack('I', args.header_version))
+     # os version and patch level
+     args.output.write(pack('I', (args.os_version << 11) | args.os_patch_level))
+     # asciiz product name
+@@ -495,6 +499,14 @@ def parse_cmdline():
+     parser.add_argument('--second', type=FileType('rb'),
+                         help='path to the second bootloader')
+     parser.add_argument('--dtb', type=FileType('rb'), help='path to the dtb')
++    # A37f: msm8916 memakai tabel device tree Qualcomm lama (dt.img, format
++    # QCDT) yang dipilih aboot saat boot, bukan --dtb header v2. mkbootimg AOSP
++    # 12 membuang dukungan ini. Disalin dari mkbootimg LineageOS 23.2
++    # (system/tools/mkbootimg/mkbootimg.py:509), yang dipakai membangun boot.img
++    # A37 yang terbukti boot di perangkat.
++    parser.add_argument('--dt', type=FileType('rb'),
++                        help='path to the legacy Qualcomm device tree image '
++                             '(dt.img); boot header v0 only')
+     dtbo_group = parser.add_mutually_exclusive_group()
+     dtbo_group.add_argument('--recovery_dtbo', type=FileType('rb'),
+                             help='path to the recovery DTBO')
+@@ -625,6 +637,7 @@ def write_data(args, pagesize):
+     write_padded_file(args.output, args.kernel, pagesize)
+     write_padded_file(args.output, args.ramdisk, pagesize)
+     write_padded_file(args.output, args.second, pagesize)
++    write_padded_file(args.output, args.dt, pagesize)
+ 
+     if args.header_version > 0 and args.header_version < 3:
+         write_padded_file(args.output, args.recovery_dtbo, pagesize)

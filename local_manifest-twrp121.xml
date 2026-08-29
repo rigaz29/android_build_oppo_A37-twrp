@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Local manifest TWRP 12.1 untuk OPPO A37f.
+
+  Manifest dasar: minimal-manifest-twrp/platform_manifest_twrp_aosp, branch
+  twrp-12.1. Varian _omni TIDAK punya branch 12.1 -- hanya varian AOSP.
+
+  Pohon ~33 GB setelah sync, dan build butuh ~15 GB lagi.
+
+  PRASYARAT BUILD, semuanya terbukti perlu:
+
+    unset -f grep                       sebelum source build/envsetup.sh;
+                                        grep di lingkungan ini adalah fungsi
+                                        yang mengalihkan ke ugrep dan merusak
+                                        parsing lunch
+    export CCACHE_DIR=<pohon>/out/.ccache
+                                        /root/.ccache read-only dari dalam
+                                        sandbox build 12.1; /root/.bashrc
+                                        menyetel CCACHE_EXEC sehingga
+                                        USE_CCACHE=0 saja tidak menolong
+    patches-twrp121/0001                terapkan ke system/tools/mkbootimg;
+                                        mkbootimg AOSP 12 membuang --dt yang
+                                        dibutuhkan QCDT A37
+
+  Kalau build gagal dengan "could not make way for new symlink: root/etc",
+  hapus out/target/product/A37f/recovery dan obj/PACKAGING/recovery_intermediates
+  -- sisa direktori dari build lama menghalangi pembuatan symlink.
+-->
+<manifest>
+  <remote name="gh" fetch="https://github.com/rigaz29/" />
+  <project path="device/oppo/A37f" name="android_device_oppo_A37f" remote="gh" revision="twrp-12.1" />
+</manifest>
