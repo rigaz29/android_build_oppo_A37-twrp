@@ -1,0 +1,35 @@
+# Android fstab file untuk recovery, OPPO A37f.
+#
+# Basis 12.1 memakai format fstab Android v2 (sama seperti fstab.qcom ROM),
+# bukan format twrp.fstab milik basis 9.0.
+#
+# Baris /data SENGAJA memakai opsi yang IDENTIK dengan fstab ROM
+# (rb_device_oppo_A37@09e3e2e1, rootdir/etc/fstab.qcom:25), termasuk sufiks
+# ":v1". Berbeda dari basis 9.0 yang parsernya memecah pada titik dua pertama
+# sehingga ":v1" mengotori fbe.filenames, basis 12.1 memakai libfstab platform
+# yang mengurainya dengan benar.
+#
+# Kernel A37 hanya punya kebijakan fscrypt v1 (fs/crypto/ tanpa keyring.c dan
+# hkdf.c), dan itu dinyatakan lewat TW_USE_FSCRYPT_POLICY := 1 di BoardConfig.
+#
+# Mode Adiantum harus SAMA PERSIS dengan fstab ROM. Recovery membaca mode
+# sebenarnya dari konteks fscrypt tiap direktori, bukan dari baris ini, tapi
+# perbedaan di sini akan menyesatkan siapa pun yang membacanya berikutnya.
+#
+# Syarat sesungguhnya ada di kernel: recovery WAJIB memakai kernel yang
+# memuat commit "fscrypt: dukung FS_POLICY_FLAG_DIRECT_KEY untuk Adiantum",
+# karena libfscrypt selalu menyalakan flag itu untuk Adiantum. Kernel tanpa
+# commit tersebut akan menolak konteksnya dengan -EINVAL dan /data tidak
+# akan terbuka dari recovery.
+
+/dev/block/bootdevice/by-name/system         /system      ext4    ro,discard                                                  wait
+/dev/block/bootdevice/by-name/userdata       /data        f2fs    nosuid,nodev,noatime,inline_xattr                           wait,check,formattable,fileencryption=adiantum:adiantum:v1
+/dev/block/bootdevice/by-name/cache          /cache       ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc              wait,check,formattable
+/dev/block/bootdevice/by-name/persist        /persist     ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc              wait
+/dev/block/bootdevice/by-name/boot           /boot        emmc    defaults                                                    defaults
+/dev/block/bootdevice/by-name/recovery       /recovery    emmc    defaults                                                    defaults
+/dev/block/bootdevice/by-name/misc           /misc        emmc    defaults                                                    defaults
+/dev/block/bootdevice/by-name/modem          /firmware    vfat    ro,shortname=lower,uid=1000,gid=1026,dmask=227,fmask=337    wait
+
+/devices/soc.0/7864900.sdhci/mmc_host*       auto         auto    defaults                                                    voldmanaged=sdcard1:auto
+/devices/platform/msm_hsusb*                 auto         auto    defaults                                                    voldmanaged=usbdisk:auto

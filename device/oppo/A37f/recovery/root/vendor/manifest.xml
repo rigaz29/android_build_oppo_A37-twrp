@@ -1,0 +1,34 @@
+<!--
+    Manifest VINTF perangkat untuk recovery, OPPO A37f.
+
+    hwservicemanager membaca VINTF saat start. Pada percobaan di basis 9.0
+    ramdisk TWRP tidak punya manifest sama sekali, dan hwservicemanager
+    SIGABRT -- itu kemungkinan besar sebabnya.
+
+    Hanya mendeklarasikan HAL yang benar-benar dijalankan recovery: gatekeeper
+    dan keymaster, keduanya implementasi software. health TIDAK didaftarkan
+    karena A37f tidak menjalankan servis health di recovery.
+-->
+<manifest version="2.0" type="device" target-level="legacy">
+    <hal format="hidl">
+        <name>android.hardware.gatekeeper</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IGatekeeper</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="hidl">
+        <name>android.hardware.keymaster</name>
+        <transport>hwbinder</transport>
+        <version>4.1</version>
+        <interface>
+            <name>IKeymasterDevice</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <sepolicy>
+        <version>30.0</version>
+    </sepolicy>
+</manifest>

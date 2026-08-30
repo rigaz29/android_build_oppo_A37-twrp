@@ -2,3 +2,7 @@
 out/
 *.img
 *.zip
+
+# Kernel prebuilt TWRP (18 MB) sengaja TIDAK masuk repo -- bisa dibangun ulang
+# dari kernel_oppo_msm8939 branch twrp-12.1-adiantum. Lihat README.md.
+device/oppo/A37f/prebuilt/

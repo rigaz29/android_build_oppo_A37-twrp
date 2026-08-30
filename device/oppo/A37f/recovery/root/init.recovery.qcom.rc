@@ -1,0 +1,109 @@
+# init recovery TWRP untuk OPPO A37f, basis twrp-12.1.
+#
+# Struktur bagian kripto disalin dari rujukan acroreiser
+# (android_device_lenovo_a6010, twrp-12.1) yang terbukti mendekripsi FBE di
+# msm8916/kernel 3.10. Izin perangkat dipertahankan dari device tree A37f
+# basis 9.0.
+
+on fs
+    wait /dev/block/platform/soc.0/${ro.boot.bootdevice}
+    symlink /dev/block/platform/soc.0/${ro.boot.bootdevice} /dev/block/bootdevice
+
+# Dekripsi FBE.
+#
+# install_keyring adalah perintah BAWAAN init yang membuat keyring fscrypt.
+# Ini yang TIDAK saya lakukan pada percobaan di basis 9.0, dan kemungkinan
+# salah satu sebab kegagalannya.
+#
+# Kedua servis di bawah implementasi SOFTWARE, bukan HAL vendor. A37 tidak punya
+# keymaster hardware -- keystore.msm8916.so tidak pernah diekstrak ke blob vendor
+# kita, sehingga hw_get_module("keystore") gagal dan Android jatuh ke software
+# ("Could not find any keystore module, using software-only implementation").
+# Justru itu yang membuat dekripsi dari recovery mungkin secara prinsip.
+on property:ro.crypto.state=encrypted && property:ro.crypto.type=file
+    install_keyring
+    start gatekeeper-1-0
+    start keymaster-4-1
+
+# Hentikan setelah selesai supaya tidak menahan sumber daya.
+on property:twrp.all.users.decrypted=true
+    setprop crypto.ready 0
+    stop gatekeeper-1-0
+    stop keymaster-4-1
+
+on early-init
+    mkdir /dev/cpuset 0664 root system
+    mount cgroup cpuset /dev/cpuset cpuset
+    mkdir /dev/cpuset/foreground 0664 root system
+    mkdir /dev/cpuset/background 0664 root system
+    mkdir /dev/cpuset/system-background 0664 root system
+    mkdir /dev/cpuset/top-app 0664 root system
+    mkdir /dev/cpuset/restricted 0664 root system
+
+    write /dev/cpuset/foreground/cpuset.cpus 0-3
+    write /dev/cpuset/foreground/cpuset.mems 0
+    write /dev/cpuset/background/cpuset.cpus 0-1
+    write /dev/cpuset/background/cpuset.mems 0
+    write /dev/cpuset/system-background/cpuset.cpus 0-1
+    write /dev/cpuset/system-background/cpuset.mems 0
+    write /dev/cpuset/top-app/cpuset.cpus 0-3
+    write /dev/cpuset/top-app/cpuset.mems 0
+    write /dev/cpuset/restricted/cpuset.cpus 1
+    write /dev/cpuset/restricted/cpuset.mems 0
+
+on init
+    chmod 0660 /dev/vm_bms
+    chown system system /dev/vm_bms
+    chmod 0660 /dev/battery_data
+    chown system system /dev/battery_data
+
+    # vm_bms
+    chown root system /sys/class/power_supply/bms/capacity
+    chmod 0660 /sys/class/power_supply/bms/capacity
+    chown root system /sys/class/power_supply/bms/current_now
+    chown root system /sys/class/power_supply/bms/voltage_ocv
+    chmod 0664 /sys/class/power_supply/bms/current_now
+    chmod 0664 /sys/class/power_supply/bms/voltage_ocv
+
+    # qseecomd
+    chmod 0660 /dev/qseecom
+    chown system drmrpc /dev/qseecom
+    chmod 0664 /dev/ion
+    chown system system /dev/ion
+
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
+
+service vm_bms /system/bin/vm_bms
+    user root
+    group root
+    seclabel u:r:init:s0
+
+# LD_LIBRARY_PATH diset eksplisit: pustaka QSEECom ada di /vendor/lib pada
+# ramdisk ini, di luar jalur pencarian bawaan.
+service qseecomd /system/bin/qseecomd
+    user root
+    group root
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib
+    disabled
+    seclabel u:r:recovery:s0
+
+service gatekeeper-1-0 /system/bin/android.hardware.gatekeeper@1.0-service.software
+    user root
+    group root
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib
+    disabled
+    seclabel u:r:recovery:s0
+
+service keymaster-4-1 /system/bin/android.hardware.keymaster@4.1-service
+    user root
+    group root
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib:/system/lib64:/system/lib
+    disabled
+    seclabel u:r:recovery:s0
+
+on property:sys.usb.config=*
+    setprop sys.usb.state ${sys.usb.config}
+
+on property:ro.twrp.boot=1
+    write /proc/boot_completed_prop 1
+    setprop persist.sys.usb.config mtp,adb

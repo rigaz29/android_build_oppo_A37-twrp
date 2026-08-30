@@ -1,5 +1,13 @@
 # Tambalan basis twrp-12.1
 
+Berlaku di atas `bootable/recovery` commit **`5c3d206a5eeb`**. Nomor 0001
+menyentuh `system/tools/mkbootimg`, sisanya `bootable/recovery`.
+
+```
+cd bootable/recovery && git checkout 5c3d206a5eeb
+git apply /path/ke/patches-twrp121/000[2-5]-*.patch
+```
+
 ## 0001 — mkbootimg: dukung `--dt` (QCDT)
 
 `system/tools/mkbootimg/mkbootimg.py` di AOSP 12 hanya menyediakan `--dtb`
