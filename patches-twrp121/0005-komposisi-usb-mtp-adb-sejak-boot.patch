@@ -1,0 +1,61 @@
+diff --git a/etc/init.rc b/etc/init.rc
+index 5c13ef7..6296f67 100644
+--- a/etc/init.rc
++++ b/etc/init.rc
+@@ -112,8 +112,27 @@ on property:ro.debuggable=1
+     setprop service.adb.root 1
+ 
+ # Always start adbd on userdebug and eng builds
++#
++# A37f: nilai awal langsung "mtp,adb", BUKAN "adb".
++#
++# HANYA baris ini yang diubah. 'on fs' di init.recovery.usb.rc SENGAJA
++# dibiarkan menulis "functions adb" -- percobaan sebelumnya mengubah keduanya
++# sekaligus dan gadget tidak naik sama sekali; menulis komposisi mtp,adb ke
++# sysfs pada tahap 'on fs', sebelum /dev/usb-ffs/adb ter-mount, adalah
++# tersangkanya.
++#
++# Alasan perubahan ini: Enable_MTP() (partitionmanager.cpp) hanya memutar
++# sys.usb.config kalau nilainya BELUM "mtp,adb". Dengan nilai ini disetel
++# sebelum adbd pertama kali berjalan, pergantian komposisi tidak pernah terjadi
++# saat adbd sudah mengikat endpoint -- dan pergantian itulah pemicu kebocoran.
++#
++# Kebocorannya terukur: setelah komposisi berganti, satu berkas epfile (ep1)
++# tetap terbuka tanpa fd mana pun di seluruh sistem, sehingga
++# "ffs: ep0 open DITOLAK: state=2 opened=1" berulang selamanya. io_submit()
++# menahan berkas lewat fget() (fs/aio.c:1110) dan baru melepasnya saat request
++# selesai (:542); antrean baca AIO adbd di ep1 tidak pernah diselesaikan.
+ on fs && property:ro.debuggable=1
+-    setprop sys.usb.config adb
++    setprop sys.usb.config mtp,adb
+ 
+ service fastbootd /system/bin/fastbootd
+     disabled
+diff --git a/etc/init.recovery.usb.rc b/etc/init.recovery.usb.rc
+index 8ef20e0..b683bc4 100644
+--- a/etc/init.recovery.usb.rc
++++ b/etc/init.recovery.usb.rc
+@@ -19,12 +19,23 @@ on property:sys.usb.config=mass_storage,adb
+ 
+ on property:sys.usb.config=mtp,adb
+     write /sys/class/android_usb/android0/enable 0
++    # idProduct WAJIB diganti bersama komposisi. 'on fs' menulis D001, yaitu PID
++    # untuk adb TUNGGAL; Enable_MTP() biasanya menggantinya ke 4EE2
++    # (usb.product.mtpadb, partitionmanager.cpp:2833) saat memutar komposisi.
++    # Karena komposisi kini sudah "mtp,adb" sejak boot, Enable_MTP() melewati
++    # seluruh blok itu -- termasuk penulisan idProduct. Akibatnya perangkat
++    # mengumumkan PID adb-tunggal padahal menyajikan dua antarmuka, dan host
++    # tidak mencocokkan antarmuka adb sama sekali: di PC muncul sebagai TIDAK
++    # TERDETEKSI, bukan offline.
++    write /sys/class/android_usb/android0/idProduct 4EE2
+     write /sys/class/android_usb/android0/functions ${sys.usb.config}
+     write /sys/class/android_usb/android0/enable 1
+     start adbd
+ 
+ on property:sys.usb.config=adb
+     write /sys/class/android_usb/android0/enable 0
++    # Pasangan dari aturan di atas: kembalikan PID adb-tunggal.
++    write /sys/class/android_usb/android0/idProduct D001
+     write /sys/class/android_usb/android0/functions ${sys.usb.config}
+     write /sys/class/android_usb/android0/enable ${service.adb.root}
+     start adbd

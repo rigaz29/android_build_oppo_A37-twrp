@@ -1,9 +1,8 @@
 # TWRP A37f dengan dukungan FBE — recovery dulu, baru sistem
 
-> **Status: tujuan utama SELESAI.** FBE berjalan di ROM (Fase 3-4, terukur)
-> **dan TWRP 12.1 berhasil mendekripsi `/data`** — `User 0 Decrypted
-> Successfully!`. Rinciannya di Fase 6. Fase 7 mengejar MTP dan adb agar
-> berjalan berdampingan; MTP sudah jalan, adb masih dikerjakan.
+> **Status: SELESAI.** FBE berjalan di ROM (Fase 3-4, terukur), **TWRP 12.1
+> berhasil mendekripsi `/data`** (Fase 6), dan **adb + MTP berjalan
+> berdampingan** (Fase 7). Semua terverifikasi di perangkat.
 
 Tujuan tunggal: **recovery yang bisa mendekripsi `/data` ber-FBE.** Ini prasyarat,
 bukan pelengkap. Tanpa ini, mengaktifkan FBE di ROM berarti membuat perangkat yang
@@ -799,10 +798,11 @@ Perangkat masukan yang tetap dibaca hanya empat yang dibutuhkan:
 
 ---
 
-## Fase 7 — MTP dan adb berdampingan (sedang berjalan)
+## Fase 7 — MTP dan adb berdampingan. SELESAI.
 
-> Ditulis 29 Agustus 2026, lanjutan Fase 6. Berisi satu perbaikan yang sudah
-> terbukti dan satu yang belum.
+> Ditulis 29-30 Agustus 2026, lanjutan Fase 6. Terverifikasi di perangkat:
+> adbd memegang ep0/ep1/ep2 sementara recovery memegang /dev/mtp_usb, nol
+> penolakan.
 
 ### 7.1 MTP: bug open ganda — SELESAI, terverifikasi
 
@@ -819,7 +819,7 @@ Terbukti langsung: membuka `/dev/mtp_usb` dua kali di perangkat menghasilkan
 `Device or resource busy` pada yang kedua. Setelah ditambal, MTP berjalan dan
 PC mendeteksi storage. Lihat `patches-twrp121/0003`.
 
-### 7.2 adb setelah komposisi USB berganti — BELUM terverifikasi
+### 7.2 adb setelah komposisi USB berganti — SELESAI
 
 Dengan MTP hidup, adb jatuh ke `offline`. Logcat dari perangkat memberi
 mekanismenya tanpa ruang tebakan:
@@ -860,3 +860,81 @@ diambil**: `android.c` mereka beda 4 baris dari kita (satu pragma, satu gaya
 kurung kurawal), `struct functionfs_config` mereka tetap instance tunggal, dan
 commit CAF yang relevan sudah ada di pohon kita. Nilainya justru pada pesan
 commit `ac76de240429` yang menjelaskan ketergantungan unbind pada adbd.
+
+### 7.4 Sebab sebenarnya: kebocoran referensi AIO
+
+Enam percobaan berbasis penalaran meleset. Yang menyelesaikannya adalah
+pelacakan di kernel — `pr_info` pada setiap buka/tutup endpoint FunctionFS
+beserta nilai `state`, `opened`, dan `ref`:
+
+```
+CLOSE ep0   (opened=3 sebelum) -> 2
+CLOSE       (opened=2 sebelum) -> 1
+(tutup ketiga TIDAK PERNAH datang)
+ffs: ep0 open DITOLAK: state=2 opened=1 ref=4     <- berulang selamanya
+```
+
+`state=2` = `FFS_ACTIVE`, jadi penolakan datang dari `opened != 0` — tepat satu
+berkas terbuka, sementara pemindaian `/proc/*/fd` menemukan **nol** pemegang.
+Berkas yang hidup tanpa fd hanya bisa ditahan referensi kernel: `io_submit()`
+mengambil `fget()` (`fs/aio.c:1110`), dilepas hanya saat request selesai
+(`:542`). Antrean baca AIO adbd di `ep1` tidak pernah diselesaikan saat
+komposisi USB berganti.
+
+**Regresi dari backport AIO kita sendiri** (Fase 6.1). Backport itu wajib —
+adbd AOSP 12 tidak punya jalur legacy — jadi tidak bisa sekadar dicabut.
+
+Perbaikannya menghindari pemicu, bukan menambal kebocoran: `sys.usb.config`
+disetel `mtp,adb` di `init.rc` sebelum adbd pertama kali berjalan, sehingga
+`Enable_MTP()` melihat nilainya sudah benar dan tidak pernah memutar komposisi.
+adbd mengikat sekali, ke komposisi final. Lihat `patches-twrp121/0005`.
+
+Menambal kebocorannya sendiri butuh pelacakan request yang menggantung di
+`f_fs.c` — backport AIO tidak menyimpan daftarnya, jadi tidak ada yang bisa
+dibatalkan. Itu pekerjaan besar di jalur yang sudah dua kali membuat perangkat
+tidak boot, dan sengaja tidak dikerjakan.
+
+### 7.5 Jebakan terakhir: idProduct
+
+Setelah komposisi benar, perangkat justru **tidak terdeteksi sama sekali** di
+PC — bukan `offline`. `on fs` menulis `idProduct D001`, PID untuk adb tunggal;
+`Enable_MTP()` yang biasanya menggantinya ke `4EE2` kini dilewati seluruhnya.
+Perangkat mengumumkan PID adb-tunggal padahal menyajikan dua antarmuka, dan
+host tidak mencocokkan antarmuka adb-nya.
+
+Keadaan internal sepenuhnya benar; hanya identitas yang diumumkan yang salah.
+Itu sebabnya log terlihat sehat sementara PC kosong — perbedaan gejala
+"tidak terdeteksi" versus "offline" ternyata informasi diagnostik yang penting.
+
+### 7.6 Bug sampingan yang ditemukan
+
+`ffs_epfiles_create()` memakai `epfiles->name` (basis array) alih-alih
+`epfile->name` (kursor loop):
+
+```c
+sprintf(epfiles->name, "ep%u", i);
+```
+
+Semua iterasi menimpa `epfiles[0].name`, sehingga `epfiles[1].name` tidak
+pernah diisi. Nama endpoint di log tertukar; jumlahnya tetap benar. Justru nama
+kosong itulah yang mengidentifikasi `ep1` sebagai berkas yang bocor. Belum
+diperbaiki, supaya sumber kernel tetap sama persis dengan Image yang diuji.
+
+### 7.7 Rekapitulasi percobaan yang gagal
+
+| Percobaan | Hasil | Kenapa gagal |
+|---|---|---|
+| `TW_EXCLUDE_MTP := true` | adb jalan, MTP hilang | menyerang gejala |
+| `TW_MTP_DEFAULT_DISABLED` | tidak berpengaruh | `mPersist` hanya default; nilai tersimpan menang |
+| komposisi statis + `on fs` diubah | keduanya mati | menulis `mtp,adb` ke sysfs sebelum ffs ter-mount |
+| `restart adbd` di init | tetap offline | `restart` = stop+start tanpa menunggu; balapan `ep0` |
+| `Release_ADB_FFS()` | tetap offline | adbd memang berhenti bersih; bukan itu masalahnya |
+| pemulihan `FFS_CLOSING` | tetap offline | `state` ternyata `FFS_ACTIVE`, bukan `FFS_CLOSING` |
+
+Enam kali. Setiap kali penalarannya masuk akal dan setiap kali salah, karena
+menebak di antara beberapa mekanisme yang sama-sama mungkin. Yang mengakhirinya
+satu putaran instrumentasi yang mencetak angkanya.
+
+**Pelajaran yang sama untuk ketiga kalinya di proyek ini** (lihat 6.7 dan
+Fase 5): kalau sebuah kegagalan sudah dua kali salah tebak, berhenti menambal
+dan pasang pengukuran. Itu satu siklus flash yang menggantikan enam.
