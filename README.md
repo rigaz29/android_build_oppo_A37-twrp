@@ -33,12 +33,17 @@ Branch `twrp-12.1-adiantum` = `twrp-12.1` (FunctionFS AIO, pemulihan
 FFS_CLOSING) digabung dengan `adiantum` (f2fs 201 commit, cipher Adiantum,
 NEON arm64, mode fscrypt).
 
-⚠️ **Kernel recovery masih tertinggal satu commit.** `twrp-12.1-adiantum`
-dibuat SEBELUM ditemukan bahwa libfscrypt selalu menyalakan
-`FSCRYPT_POLICY_FLAG_DIRECT_KEY` untuk Adiantum. Commit `b4799b06c556` di
-branch `adiantum` yang menanganinya belum digabungkan ke sini, sehingga
-recovery yang dibangun sekarang **belum bisa mendekripsi `/data` ber-Adiantum**.
-Harus digabung dan dibangun ulang sebelum `/data` diformat.
+Branch itu kini **sudah memuat** commit `b4799b06c556`
+(`FS_POLICY_FLAG_DIRECT_KEY`), digabung sebagai `f43ae9632fe7`. Tanpa commit
+tersebut libfscrypt akan ditolak `-EINVAL` saat membuka `/data` ber-Adiantum,
+karena ia selalu menyalakan flag itu
+(`system/extras/libfscrypt/fscrypt.cpp:261`).
+
+Recovery yang dipakai sekarang dikemas ulang, bukan dibangun ulang: ramdisk
+TWRP tidak berubah sejak build sebelumnya, jadi hanya bagian kernel di dalam
+`recovery.img` yang ditukar. Field `id`-nya dihitung ulang dengan rumus yang
+dipakai mkbootimg kita — `sha1(kernel|len, ramdisk|len, second|len)`, **tanpa
+DT**; rumus lain menghasilkan id yang tidak cocok.
 
 ## Tambalan `bootable/recovery`
 
@@ -69,4 +74,22 @@ adb USB dan MTP hidup BERSAMAAN
 dekripsi FBE /data berjalan (AES)
 ```
 
-Yang belum terbukti: dekripsi Adiantum — lihat peringatan kernel di atas.
+Dan sejak 31 Agustus 2026, **dekripsi Adiantum juga terbukti**. Setelah
+`/data` diformat ulang dengan `fileencryption=adiantum:adiantum:v1`, TWRP
+meminta PIN dan membuka `/data`. Log recovery menunjukkan kedua kunci
+terpasang, bukan hanya satu:
+
+```
+recovery: Added key ... (fscrypt:07808c2397205753) to keyring
+recovery: fscrypt_prepare_user_storage  user 0, flags 1     <- DE
+recovery: fscrypt_unlock_user_key 0
+recovery: Added key ... (fscrypt:24f0d587075ede30) to keyring
+recovery: fscrypt_prepare_user_storage  user 0, flags 2     <- CE
+```
+
+`flags 1` device-encrypted, `flags 2` credential-encrypted.
+
+Catatan untuk yang akan memformat: pada perangkat FBE, TWRP **sengaja tidak
+membuat ulang** `/data/media` (`partition.cpp:2190`). Penyimpanan internal
+baru ada setelah ROM boot sekali. Itu perlindungan, bukan kekurangan — fscrypt
+hanya bisa memasang kebijakan pada direktori kosong.
