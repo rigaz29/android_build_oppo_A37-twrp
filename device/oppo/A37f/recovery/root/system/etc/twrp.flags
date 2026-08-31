@@ -12,3 +12,8 @@
 /fsg            emmc    /dev/block/bootdevice/by-name/fsg           flags=display="Efs";backup=1
 /oem            emmc    /dev/block/bootdevice/by-name/oem           flags=display="OEM";backup=1
 /external_sd    auto    /dev/block/mmcblk1p1                        flags=display="Micro SDCard";storage;wipeingui;removable
+# USB OTG. Menggantikan baris voldmanaged=usbdisk di recovery.fstab yang
+# TWRP abaikan (partition.cpp:945-948) dan hanya menghasilkan /auto1 berlabel
+# "Storage" tanpa blok perangkat yang bisa dipakai.
+# Kernel mendukungnya: CONFIG_USB_STORAGE=y dan CONFIG_USB_EHCI_HCD=y.
+/usb-otg        auto    /dev/block/sda1                             flags=display="USB OTG";storage;wipeingui;removable
