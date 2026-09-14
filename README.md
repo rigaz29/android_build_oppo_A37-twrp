@@ -1,5 +1,12 @@
 # TWRP 12.1 untuk OPPO A37f
 
+> **14 September 2026 — varian 64-bit.** Cabang pohon perangkat
+> [`twrp-12.1-64bit`](https://github.com/rigaz29/android_device_oppo_A37f/tree/twrp-12.1-64bit)
+> membangun recovery dengan userspace **arm64**. Alasannya di §"Kenapa 64-bit"
+> di bawah. Cabang `twrp-12.1` (32-bit) tetap ada dan tetap yang terbukti
+> mendekripsi FBE.
+
+
 Isi repo ini: pohon perangkat TWRP, tambalan terhadap `bootable/recovery`, dan
 bukti perangkat.
 
@@ -93,3 +100,65 @@ Catatan untuk yang akan memformat: pada perangkat FBE, TWRP **sengaja tidak
 membuat ulang** `/data/media` (`partition.cpp:2190`). Penyimpanan internal
 baru ada setelah ROM boot sekali. Itu perlindungan, bukan kekurangan — fscrypt
 hanya bisa memasang kebijakan pada direktori kosong.
+
+
+---
+
+## Kenapa 64-bit (14 September 2026)
+
+Recovery 32-bit **menolak paket GApps arm64**. Installer MindTheGapps membaca
+`getprop ro.bionic.arch` dari lingkungan **recovery**, bukan dari ROM, lalu
+membandingkannya dengan arsitektur paket:
+
+```sh
+GAPPS_ARCH=$(getprop2 $TMP/build.prop arch)   # arm64
+CPU_ARCH=$(getprop ro.bionic.arch)            # arm  <- dari recovery
+if [ $GAPPS_ARCH != $CPU_ARCH ]; then
+  error "This package is built for $GAPPS_ARCH but your device is $CPU_ARCH! Aborting"
+fi
+```
+
+Properti itu datang langsung dari build system:
+`build/make/core/main.mk` menyetel `ro.bionic.arch=$(TARGET_ARCH)`. Jadi selama
+`TARGET_ARCH := arm`, recovery ini akan selalu melaporkan `arm` walau ROM yang
+terpasang arm64. `setprop` tidak bisa menimpanya (properti `ro.`).
+
+Kernelnya sendiri sudah sanggup, dan itu diuji lebih dulu: `toybox` aarch64
+bawaan paket GApps dijalankan di recovery 32-bit dan berhasil.
+
+### Yang berubah di cabang 64-bit
+
+| | |
+|---|---|
+| `TARGET_ARCH` | `arm` → `arm64`, `TARGET_CPU_ABI` → `arm64-v8a`, suffix `_32` → `_64` |
+| `TARGET_SUPPORTS_64_BIT_APPS := false` | wajib; `board_config.mk:244-249` menolak build tanpanya |
+| arch kedua | **tidak ada**. Ramdisk recovery hanya memuat pustaka arch utama, jadi arch kedua tak akan punya runtime |
+| keymaster + gatekeeper | dibangun ulang dari sumber sebagai arm64 — keduanya implementasi **software AOSP**, bukan blob vendor |
+| `system/lib` 32-bit | dihapus; `libkeymaster4`, `libkeymaster41`, `libresetprop` kini di `system/lib64` |
+| `vm_bms`, `qseecomd`, `vendor/lib/*` QSEECom | **dibuang** — blob vendor yang hanya ada 32-bit, mustahil dieksekusi. `qseecomd` toh sudah `disabled`, dan `readelf` membuktikan keymaster/gatekeeper tidak menautnya |
+
+`CONFIG_KEYS_COMPAT` menjadi tidak relevan di varian ini: ia hanya dibutuhkan
+ketika `keyctl()` dipanggil dari userspace 32-bit.
+
+### Hasil verifikasi build
+
+```
+ro.bionic.arch = arm64
+223 berkas ELF di ramdisk, SELURUHNYA 64-bit, nol 32-bit
+penutupan pustaka jalur kripto lengkap (audit rekursif seluruh lib64: nol hilang)
+header boot: kernel @0x80008000, ramdisk @0x82000000, pagesize 2048,
+             QCDT 210.944 byte -- sama persis dengan boot.img LineageOS 20
+```
+
+### Belum diuji di perangkat
+
+Dua hal yang wajib diperiksa setelah flash: **dekripsi FBE** (biner kripto
+dibangun ulang, penutupan pustaka terverifikasi, tetapi belum terbukti
+berjalan) dan **persentase baterai** tanpa `vm_bms`.
+
+### Catatan: `local_manifest-twrp121.xml` sempat ditolak repo
+
+Komentarnya memuat tanda hubung ganda (`12.1 -- hanya varian AOSP`), yang
+terlarang di dalam komentar XML. `repo sync` berhenti dengan
+`not well-formed (invalid token): line 6, column 52`. Sudah diperbaiki memakai
+em dash.
