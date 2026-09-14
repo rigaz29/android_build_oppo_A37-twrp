@@ -2,9 +2,11 @@
 
 > **14 September 2026 — varian 64-bit.** Cabang pohon perangkat
 > [`twrp-12.1-64bit`](https://github.com/rigaz29/android_device_oppo_A37f/tree/twrp-12.1-64bit)
-> membangun recovery dengan userspace **arm64**. Alasannya di §"Kenapa 64-bit"
-> di bawah. Cabang `twrp-12.1` (32-bit) tetap ada dan tetap yang terbukti
-> mendekripsi FBE.
+> membangun recovery dengan userspace **arm64**, dan image-nya dirilis di
+> [`twrp-3.7.1_12-64bit-20260914`](https://github.com/rigaz29/android_build_oppo_A37-twrp/releases/tag/twrp-3.7.1_12-64bit-20260914).
+> Alasannya di §"Kenapa 64-bit" di bawah. Cabang `twrp-12.1` (32-bit) tetap ada
+> dan tetap yang terbukti mendekripsi FBE — **pertahankan image-nya sebagai
+> jalan mundur** sampai varian 64-bit terbukti membuka `/data`.
 
 
 Isi repo ini: pohon perangkat TWRP, tambalan terhadap `bootable/recovery`, dan
