@@ -22,7 +22,7 @@
 # commit tersebut akan menolak konteksnya dengan -EINVAL dan /data tidak
 # akan terbuka dari recovery.
 
-/dev/block/bootdevice/by-name/system         /system      ext4    ro,discard                                                  wait
+/dev/block/bootdevice/by-name/system         /system      ext4    ro,discard                                                  wait,formattable
 /dev/block/bootdevice/by-name/userdata       /data        f2fs    nosuid,nodev,noatime,inline_xattr                           wait,check,formattable,fileencryption=adiantum:adiantum:v1
 /dev/block/bootdevice/by-name/cache          /cache       ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc              wait,check,formattable
 /dev/block/bootdevice/by-name/persist        /persist     ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc              wait
