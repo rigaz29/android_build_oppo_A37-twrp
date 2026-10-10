@@ -21,9 +21,13 @@
 # karena libfscrypt selalu menyalakan flag itu untuk Adiantum. Kernel tanpa
 # commit tersebut akan menolak konteksnya dengan -EINVAL dan /data tidak
 # akan terbuka dari recovery.
+#
+# "fscompress" hanya dibaca TWRP (TW_ENABLE_FS_COMPRESSION): Format Data
+# membuat /data berflag compression. ROM baru memampatkan berkas kalau fstab
+# ROM sendiri memakai fscompress atau opsi mount compress_*.
 
 /dev/block/bootdevice/by-name/system         /system      ext4    ro,discard                                                  wait,formattable
-/dev/block/bootdevice/by-name/userdata       /data        f2fs    nosuid,nodev,noatime,inline_xattr                           wait,check,formattable,fileencryption=adiantum:adiantum:v1
+/dev/block/bootdevice/by-name/userdata       /data        f2fs    nosuid,nodev,noatime,inline_xattr                           wait,check,formattable,fscompress,fileencryption=adiantum:adiantum:v1
 /dev/block/bootdevice/by-name/cache          /cache       ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc              wait,check,formattable
 /dev/block/bootdevice/by-name/persist        /persist     ext4    noatime,nosuid,nodev,barrier=1,noauto_da_alloc              wait
 /dev/block/bootdevice/by-name/boot           /boot        emmc    defaults                                                    defaults

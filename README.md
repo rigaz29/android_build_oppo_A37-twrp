@@ -48,6 +48,14 @@ tersebut libfscrypt akan ditolak `-EINVAL` saat membuka `/data` ber-Adiantum,
 karena ia selalu menyalakan flag itu
 (`system/extras/libfscrypt/fscrypt.cpp:261`).
 
+**Varian kompresi f2fs (10 Oktober 2026).** Kernel branch `twrp-12.1-f2fs` =
+`twrp-12.1` + rantai f2fs dari pohon utama (f2fs level f2fs-stable
+linux-6.1.y plus fix CVE sesudahnya) dengan `CONFIG_F2FS_FS_COMPRESSION=y`.
+Pasangannya device tree branch `twrp-12.1-f2fs` (`TW_ENABLE_FS_COMPRESSION`,
+flag `fscompress` pada `/data`): Format Data membuat `/data` berflag
+compression. Kernel ini `FS_ENCRYPTION=n`, jadi recovery-nya **tidak bisa
+membuka `/data` FBE** -- untuk ROM ber-FBE tetap pakai image `twrp-12.1`.
+
 Recovery yang dipakai sekarang dikemas ulang, bukan dibangun ulang: ramdisk
 TWRP tidak berubah sejak build sebelumnya, jadi hanya bagian kernel di dalam
 `recovery.img` yang ditukar. Field `id`-nya dihitung ulang dengan rumus yang
