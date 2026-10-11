@@ -262,13 +262,6 @@ TW_INCLUDE_CRYPTO_FBE := true
 TW_USE_FSCRYPT_POLICY := 1
 TW_FORCE_KEYMASTER_VER := true
 
-# Kompresi f2fs. Mengaktifkan flag fstab "fscompress" (partition.cpp), sehingga
-# Format Data menjalankan make_f2fs dengan -O compression,extra_attr. Kernel
-# prebuilt harus CONFIG_F2FS_FS_COMPRESSION=y (kernel_oppo_msm8939
-# twrp-12.1-f2fs). Kernel itu FS_ENCRYPTION=n: recovery ini tidak bisa membuka
-# /data FBE; simpan image twrp-12.1 lama untuk ROM ber-FBE.
-TW_ENABLE_FS_COMPRESSION := true
-
 TARGET_OTA_ASSERT_DEVICE := a37f,A37f,A37fw,a37fw,msm8916,msm8939
 
 PLATFORM_VERSION             := 99.87.36
